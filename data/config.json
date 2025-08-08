@@ -1,0 +1,22 @@
+{
+  "mqtt": {
+    "host": "192.168.1.134",
+    "port": "1883",
+    "wsPort": "9001"
+  },
+  "RestAPI": {
+    "host": "raspi-t40cd.local",
+    "port": "8000"
+  },
+  "camera": {
+    "width": 2304,
+    "height": 1296,
+    "scale": 0.125,
+    "focus_length": "10.12768268585205",
+    "exposure": 60000,
+    "AnalogueGain": 1
+  },
+  "frame": 0,
+  "bench": "T40CD",
+  "path": "./config"
+}

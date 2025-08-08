@@ -1,0 +1,255 @@
+{
+  "name": "XTRAIL",
+  "path": "/ros2_ws/src/camera_system/templates",
+  "threshold": 0.8,
+  "gray": true,
+  "offset": 50,
+  "icon": [
+    {
+      "name": "check engine",
+      "path": "/ros2_ws/src/camera_system/templates/check_engine.png",
+      "type": "bool",
+      "shape": "box",
+      "top_left": {
+        "x": 1920.1426448736997,
+        "y": 578.4606240713224
+      },
+      "bottom_right": {
+        "x": 2029.265973254086,
+        "y": 646.9301634472511
+      }
+    },
+    {
+      "name": "Fuel Empty",
+      "path": "/ros2_ws/src/camera_system/templates/Fuel Empty.png",
+      "type": "bool",
+      "shape": "box",
+      "top_left": {
+        "x": 1389.5037147102526,
+        "y": 963.6017830609212
+      },
+      "bottom_right": {
+        "x": 1457.8276374442796,
+        "y": 1006.3952451708766
+      }
+    },
+    {
+      "name": "OIL level",
+      "path": "/ros2_ws/src/camera_system/templates/OIL level.png",
+      "type": "bool",
+      "shape": "box",
+      "top_left": {
+        "x": 512.2377414561665,
+        "y": 702.5616641901931
+      },
+      "bottom_right": {
+        "x": 623.5007429420506,
+        "y": 777.4502228826151
+      }
+    },
+    {
+      "name": "亀",
+      "path": "/ros2_ws/src/camera_system/templates/warning.png",
+      "type": "bool",
+      "shape": "box",
+      "top_left": {
+        "x": 420,
+        "y": 960
+      },
+      "bottom_right": {
+        "x": 514,
+        "y": 1020
+      }
+    },
+    {
+      "name": "Alert",
+      "path": "/ros2_ws/src/camera_system/templates/Alert.png",
+      "type": "bool",
+      "shape": "box",
+      "top_left": {
+        "x": 1122.0445765230313,
+        "y": 1119.7979197622585
+      },
+      "bottom_right": {
+        "x": 1216.0445765230315,
+        "y": 1179.7979197622585
+      }
+    }
+  ],
+  "meter": [
+    {
+      "name": "Fuel Control",
+      "path": "/ros2_ws/src/camera_system/templates/Fuel Control.png",
+      "type": "float",
+      "shape": "circle",
+      "center": {
+        "x": 1815.298662704309,
+        "y": 664.0475482912333
+      },
+      "radius": 360.10132612698305,
+      "ratio": 1,
+      "circumference": [
+        {
+          "position": {
+            "x": 1639.845468053492,
+            "y": 984.9985141158988
+          },
+          "value": 0
+        },
+        {
+          "position": {
+            "x": 1701.8959881129272,
+            "y": 1008.5349182763744
+          },
+          "value": 0.2
+        },
+        {
+          "position": {
+            "x": 1772.5052005943537,
+            "y": 1027.7919762258543
+          },
+          "value": 0.4
+        },
+        {
+          "position": {
+            "x": 1825.997028231798,
+            "y": 1025.6523031203565
+          },
+          "value": 0.5
+        },
+        {
+          "position": {
+            "x": 1877.3491827637445,
+            "y": 1017.0936106983654
+          },
+          "value": 0.6
+        },
+        {
+          "position": {
+            "x": 1937.260029717682,
+            "y": 1002.1158989598811
+          },
+          "value": 0.8
+        },
+        {
+          "position": {
+            "x": 1984.3328380386329,
+            "y": 989.2778603268944
+          },
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "temp water engine",
+      "path": "/ros2_ws/src/camera_system/templates/temp water engine.png",
+      "type": "float",
+      "shape": "circle",
+      "center": {
+        "x": 443.76820208023787,
+        "y": 689.7236255572064
+      },
+      "radius": 336.75219187131074,
+      "ratio": 1,
+      "circumference": [
+        {
+          "position": {
+            "x": 272.5943536404162,
+            "y": 976.4398216939078
+          },
+          "value": 0
+        },
+        {
+          "position": {
+            "x": 458.7459138187223,
+            "y": 1029.931649331352
+          },
+          "value": 0.5
+        },
+        {
+          "position": {
+            "x": 610.662704309064,
+            "y": 987.1381872213966
+          },
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "extra",
+      "path": "/ros2_ws/src/camera_system/templates/textra.png",
+      "type": "float",
+      "shape": "circle",
+      "center": {
+        "x": 2228.2555720653786,
+        "y": 30.70430906389306
+      },
+      "radius": 58.75341311606006,
+      "ratio": 1,
+      "circumference": [
+        {
+          "position": {
+            "x": 100,
+            "y": 100
+          },
+          "value": 0
+        },
+        {
+          "position": {
+            "x": 300,
+            "y": 100
+          },
+          "value": 0.5
+        },
+        {
+          "position": {
+            "x": 441.6285289747401,
+            "y": 90.61515601783064
+          },
+          "value": 1
+        }
+      ]
+    }
+  ],
+  "ocr": [
+    {
+      "name": "Fuel limit milage",
+      "type": "int",
+      "shape": "box",
+      "top_left": {
+        "x": 1449.4145616641902,
+        "y": 965.741456166419
+      },
+      "bottom_right": {
+        "x": 1513.6047548291233,
+        "y": 1021.3729569093609
+      }
+    },
+    {
+      "name": "Odometer",
+      "type": "int",
+      "shape": "box",
+      "top_left": {
+        "x": 649.1768202080239,
+        "y": 959.3224368499257
+      },
+      "bottom_right": {
+        "x": 809.6523031203567,
+        "y": 1019.2332838038632
+      }
+    },
+    {
+      "name": "OCR Extra",
+      "type": "int",
+      "shape": "box",
+      "top_left": {
+        "x": 950.8707280832095,
+        "y": 263.9286775631501
+      },
+      "bottom_right": {
+        "x": 1057.8543833580982,
+        "y": 360.2139673105498
+      }
+    }
+  ]
+}

@@ -1,32 +1,157 @@
-# プロジェクトコンテキスト
+# CLAUDE.md
 
-## 重要な指示
-**必ず日本語で応答してください。すべての説明、コメント、メッセージは日本語で記述してください。**
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## プロジェクト概要
-このプロジェクトは、PythonとFletフレームワークを使用した画像編集アプリケーションです。
+## Conversation Guidelines
 
-## 技術スタック
-- Python 3.8+
-- Flet (GUI フレームワーク)
-- Pillow (画像処理ライブラリ)
-- NumPy
+- 常に日本語で会話する
 
-## プロジェクト構造
+## Development Commands (Windows Only)
+
+### Environment Setup
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
 ```
-image_editor/
-├── main.py          # メインアプリケーション
-├── requirements.txt # 依存関係
-├── README.md        # 使用方法のドキュメント
-└── CLAUDE.md        # このファイル
+
+### Running the Application
+```bash
+# Run the main application (loads ./data/config.json if exists)
+python main.py
+
+# Run with debug mode
+python main.py --debug
+
+# Run with specific config
+python main.py --config ./data/config.json
+
+# Skip initial file dialog
+python main.py --no-dialog
 ```
 
-## 開発コマンド
-- アプリケーション実行: `python main.py`
-- 依存関係インストール: `pip install -r requirements.txt`
 
-## 主な機能
-- 画像の読み込み・保存
-- 変形操作（リサイズ、回転、反転）
-- フィルター適用（ぼかし、シャープ、輪郭、エンボス、グレースケール）
-- 画像調整（明度、コントラスト、彩度）
+
+
+## Development Philosophy
+
+### Test-Driven Development (TDD)
+- 原則としてテスト駆動開発（TDD）で進める
+- 期待される入出力に基づき、まずテストを作成する
+- 実装コードは書かず、テストのみを用意する
+- テストを実行し、失敗を確認する
+- テストが正しいことを確認できた段階でコミットする
+- その後、テストをパスさせる実装を進める
+- 実装中はテストを変更せず、コードを修正し続ける
+- すべてのテストが通過するまで繰り返す
+
+### Code Style Guidelines
+- Use type hints for all function parameters and return values
+- Follow PEP 8 style guide (enforced by flake8)
+- Keep functions small and focused (single responsibility)
+- Use dataclasses for data structures
+- Prefer composition over inheritance
+
+## Data Structures
+
+### config.json
+```json
+{
+  "mqtt": {
+    "host": "192.168.1.134",
+    "port": "1883",
+    "wsPort": "9001"
+  },
+  "RestAPI": {
+    "host": "raspi-t40cd.local",
+    "port": "8000"
+  },
+  "camera": {
+    "width": 2304,
+    "height": 1296,
+    "scale": 0.125,
+    "focus_length": "10.12768268585205",
+    "exposure": 60000,
+    "AnalogueGain": 1
+  },
+  "frame": 0,
+  "bench": "T40CD",
+  "path": "./config"
+}
+```
+
+### vehicle.json
+```json
+{
+  "name": "XTRAIL",
+  "path": "/ros2_ws/src/camera_system/templates",
+  "threshold": 0.8,
+  "gray": true,
+  "offset": 50,
+  "icon": [
+    {
+      "name": "check_engine",
+      "path": "/path/to/template.png",
+      "type": "bool",
+      "shape": "box",
+      "top_left": {"x": 502, "y": 418},
+      "bottom_right": {"x": 594, "y": 486}
+    }
+  ],
+  "meter": [
+    {
+      "name": "temp",
+      "type": "float",
+      "shape": "circle",
+      "center": {"x": 453, "y": 809},
+      "radius": 200,
+      "circumference": [
+        {"position": {"x": 355, "y": 873}, "value": 0},
+        {"position": {"x": 463, "y": 903}, "value": 0.5},
+        {"position": {"x": 553, "y": 875}, "value": 1}
+      ]
+    }
+  ],
+  "ocr": [
+    {
+      "name": "time",
+      "type": "int",
+      "shape": "box",
+      "top_left": {"x": 1294, "y": 136},
+      "bottom_right": {"x": 1365, "y": 199}
+    }
+  ]
+}
+```
+
+
+
+# SOD: edit_web_app.py
+## Software Design Document / System Overview Document
+
+### ドキュメント情報
+- **プロジェクト名**: Vehicle Monitor Edit Web Application
+- **バージョン**: 1.0
+- **作成日**: 2025-07-16
+- **対象システム**: edit_web_app.py
+
+## 1. システム概要
+
+### 1.1 目的
+既存のFletベースVehicle Monitor EDITモードをデスクトップアプリ車両画像上での矩形・円形パーツの編集機能をWeb環境で提供する。
+
+### 1.2 スコープ
+- 車両画像の表示・ズーム・パン操作
+- Vehicle JSONデータの読み込み・保存
+- 図形パーツ（Icon/Meter/OCR）の描画
+- 図形パーツ（Icon/Meter/OCR）の編集
+- 座標変換システム
+- 拡大・縮小機能
+- リアルタイムプレビュー機能
+
+

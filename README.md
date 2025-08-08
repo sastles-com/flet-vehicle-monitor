@@ -1,80 +1,85 @@
-# Python Image Editor
+# PyQt Vehicle Monitor Editor & Framework Comparison
 
-A desktop image editor built with Python, using Flet for the GUI and PIL/Pillow for image processing.
+メイン: PyQt/PySide6とPillowを使用したVehicle Monitor編集アプリ
+比較: 異なるGUIフレームワーク実装の比較
 
 ## Features
 
-- **Image Loading**: Support for PNG, JPG, JPEG, GIF, and BMP formats
-- **Transform Operations**:
-  - Resize images to custom dimensions
-  - Rotate images by any angle
-  - Flip horizontally or vertically
-- **Filters**:
-  - Blur
-  - Sharpen
-  - Contour
-  - Emboss
-  - Grayscale conversion
-- **Adjustments**:
-  - Brightness control
-  - Contrast control
-  - Saturation control
-- **File Operations**:
-  - Save edited images in PNG or JPEG format
-  - Reset to original image
+- **Vehicle Image Loading**: 車両画像（PNG, JPG, JPEG, GIF, BMP）の読み込み
+- **図形描画・編集**:
+  - ラバーバンドでの矩形・円形描画
+  - 図形の選択・移動・リサイズ
+  - リアルタイムプレビュー
+- **座標系変換**:
+  - 画像拡大縮小に対応した座標変換
+  - フルサイズ画像のピクセル座標でのJSON保存
+- **高度な操作**:
+  - マウスホイールでのズーム機能
+  - ウィンドウサイズに応じた自動画像フィット
+  - 複数図形の管理
 
-## Installation
+## クイックスタート（Windows）
 
-1. Install Python 3.8 or higher
-2. Install dependencies:
+### 🚀 すべてを比較したい場合
 ```bash
+compare_frameworks.bat
+```
+
+### 🖥️ PyQt版のみ使用（メイン）
+```bash
+setup.bat
+run.bat
+```
+
+### 📱 Flet版のみ使用
+```bash
+cd framework_comparison\flet
+python -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
+python image_editor.py
 ```
 
-## Usage
+### 使用方法
 
-Run the application:
-```bash
-python main.py
-```
-
-### How to Use
-
-1. Click the folder icon in the top bar to open an image
-2. Use the controls panel on the right to edit your image:
-   - **Transform**: Resize, rotate, or flip your image
-   - **Filters**: Apply various artistic filters
-   - **Adjustments**: Fine-tune brightness, contrast, and saturation with sliders
-3. Click "Reset" to revert all changes
-4. Click "Save As" to save your edited image
+1. **画像を開く**: ツールバーの「画像を開く」ボタンで車両画像を読み込み
+2. **図形を描画**: 
+   - 「矩形を描画」または「円を描画」を選択
+   - 画像上でドラッグして図形を作成
+3. **図形を編集**:
+   - 「選択モード」で図形をクリックして選択
+   - 選択した図形を移動・リサイズ
+4. **データ保存**: 「JSONを保存」で図形データを保存
+5. **ズーム操作**: マウスホイールで画像を拡大縮小
 
 ## Requirements
 
-- Python 3.8+
-- flet 0.21.2
-- Pillow 10.2.0
-- numpy 1.26.4
+- Python 3.13+
+- PySide6 6.8.0+
+- Pillow 10.4.0+
 
-## Controls Guide
+## 操作ガイド
 
-### Transform Operations
-- **Resize**: Enter width and height in pixels, then click "Resize"
-- **Rotate**: Enter rotation angle in degrees, then click "Rotate"
-- **Flip**: Click buttons to flip the image horizontally or vertically
+### 図形操作
+- **矩形描画**: 「矩形を描画」→画像上でドラッグ
+- **円描画**: 「円を描画」→画像上でドラッグ
+- **図形選択**: 「選択モード」→図形をクリック
+- **移動**: 選択した図形をドラッグ
 
-### Filters
-- Click any filter button to apply it instantly
-- Filters can be applied multiple times for stronger effects
+### ファイル操作
+- **画像読み込み**: ツールバーの「画像を開く」
+- **JSON保存**: 「JSONを保存」で図形データをエクスポート
+- **JSON読み込み**: 「JSONを読込」で図形データをインポート
+- **図形クリア**: 「図形をクリア」で全図形を削除
 
-### Adjustments
-- Use sliders to adjust in real-time:
-  - Brightness: 0.5 (darker) to 2.0 (brighter)
-  - Contrast: 0.5 (less) to 2.0 (more)
-  - Saturation: 0 (grayscale) to 2.0 (vivid)
+### 表示操作
+- **ズーム**: マウスホイールで拡大縮小
+- **自動フィット**: ウィンドウサイズ変更時に自動調整
+- **座標変換**: 表示座標と元画像座標を自動変換
 
 ## Tips
 
-- The editor maintains the original image, so you can always reset
-- Adjustments are applied in real-time as you move the sliders
-- Multiple filters can be combined for creative effects
-- The image display automatically fits to the window while maintaining aspect ratio
+- JSON保存時は元画像のピクセル座標で保存されます
+- 画像の拡大縮小に図形も追従します
+- リアルタイムでラバーバンド描画が可能です
+- 複数図形の重なりも正確に管理されます

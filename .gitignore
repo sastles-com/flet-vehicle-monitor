@@ -57,6 +57,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+venv_*/
+venv_flet/
+venv_pyqt/
 
 # IDEs
 .vscode/
