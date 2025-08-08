@@ -170,6 +170,18 @@ class ResizableGraphicsItem:
         rect = item.boundingRect()
         pos = item.pos()
         
+        # ハンドルタイプを定義（リサイズ方向を示す）
+        handle_types = [
+            "top_left",      # 左上
+            "top_center",    # 上中央
+            "top_right",     # 右上
+            "middle_right",  # 右中央
+            "bottom_right",  # 右下
+            "bottom_center", # 下中央
+            "bottom_left",   # 左下
+            "middle_left",   # 左中央
+        ]
+        
         positions = [
             (pos.x() + rect.left(), pos.y() + rect.top()),      # 左上
             (pos.x() + rect.center().x(), pos.y() + rect.top()),  # 上中央
@@ -181,7 +193,7 @@ class ResizableGraphicsItem:
             (pos.x() + rect.left(), pos.y() + rect.center().y()),  # 左中央
         ]
         
-        for x, y in positions:
+        for i, (x, y) in enumerate(positions):
             handle = QGraphicsRectItem(
                 x - self.handle_size/2,
                 y - self.handle_size/2,
@@ -193,6 +205,18 @@ class ResizableGraphicsItem:
             # ハンドルを最前面に設定
             handle.setZValue(1000)
             handle.setFlag(QGraphicsItem.ItemIsMovable, True)
+            handle.setAcceptHoverEvents(True)
+            
+            # カスタムデータとしてハンドルタイプを設定
+            handle.setData(0, handle_types[i])
+            
+            # ハンドルのドラッグイベントをカスタムハンドラで処理
+            resize_handler = ResizeHandle(handle, self, handle_types[i])
+            handle.mousePressEvent = resize_handler.mousePressEvent
+            handle.mouseMoveEvent = resize_handler.mouseMoveEvent
+            handle.mouseReleaseEvent = resize_handler.mouseReleaseEvent
+            handle.hoverEnterEvent = resize_handler.hoverEnterEvent
+            handle.hoverLeaveEvent = resize_handler.hoverLeaveEvent
             
             if self.get_item().scene():
                 self.get_item().scene().addItem(handle)
@@ -430,11 +454,14 @@ class CenterControlPoint:
             # 移動後の位置を元座標に反映
             self.update_original_coordinates()
             
+            # ハンドルを再作成して正しい位置に配置
+            self.parent_shape.create_handles()
+            
             # デフォルトの処理も実行
             QGraphicsEllipseItem.mouseReleaseEvent(self.control_point_item, event)
     
     def move_associated_items(self, delta_x: float, delta_y: float):
-        """関連するアイテム（文字、図形）を移動"""
+        """関連するアイテム（文字、図形、ハンドル）を移動"""
         # 図形の移動
         shape_item = self.parent_shape.get_item()
         current_pos = shape_item.pos()
@@ -444,6 +471,11 @@ class CenterControlPoint:
         if self.parent_shape.name_text_item:
             text_pos = self.parent_shape.name_text_item.pos()
             self.parent_shape.name_text_item.setPos(text_pos.x() + delta_x, text_pos.y() + delta_y)
+        
+        # リサイズハンドルの移動
+        for handle in self.parent_shape.handles:
+            handle_pos = handle.pos()
+            handle.setPos(handle_pos.x() + delta_x, handle_pos.y() + delta_y)
     
     def update_original_coordinates(self):
         """移動後の位置を元座標に反映"""
@@ -454,6 +486,173 @@ class CenterControlPoint:
         scale = self.parent_shape.scene_scale
         self.parent_shape.original_x = current_pos.x() / scale
         self.parent_shape.original_y = current_pos.y() / scale
+
+
+class ResizeHandle:
+    """リサイズハンドルのドラッグハンドラ"""
+    
+    def __init__(self, handle_item, parent_shape, handle_type):
+        self.handle_item = handle_item
+        self.parent_shape = parent_shape
+        self.handle_type = handle_type
+        self.is_dragging = False
+        self.start_pos = None
+        self.start_rect = None
+        self.start_item_pos = None
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = True
+            self.start_pos = event.scenePos()
+            
+            # 現在の図形の位置とサイズを記録
+            item = self.parent_shape.get_item()
+            self.start_rect = item.boundingRect()
+            self.start_item_pos = item.pos()
+            
+            # デフォルトの処理を実行
+            QGraphicsRectItem.mousePressEvent(self.handle_item, event)
+    
+    def mouseMoveEvent(self, event):
+        if self.is_dragging and self.start_pos:
+            current_pos = event.scenePos()
+            delta_x = current_pos.x() - self.start_pos.x()
+            delta_y = current_pos.y() - self.start_pos.y()
+            
+            # ハンドルタイプに応じてリサイズ処理
+            self.resize_shape(delta_x, delta_y)
+            
+            # ハンドル自体も移動
+            QGraphicsRectItem.mouseMoveEvent(self.handle_item, event)
+    
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = False
+            self.start_pos = None
+            
+            # リサイズ後の座標を元座標に反映
+            self.update_original_size()
+            
+            # ハンドルを再作成して正しい位置に配置
+            self.parent_shape.create_handles()
+            
+            # パーツ名と制御点も更新
+            self.parent_shape.update_name_display()
+            self.parent_shape.update_center_control_point()
+            
+            # デフォルトの処理を実行
+            QGraphicsRectItem.mouseReleaseEvent(self.handle_item, event)
+    
+    def resize_shape(self, delta_x, delta_y):
+        """ハンドルタイプに応じて図形をリサイズ"""
+        item = self.parent_shape.get_item()
+        
+        # 現在の矩形情報
+        new_x = self.start_item_pos.x()
+        new_y = self.start_item_pos.y()
+        new_width = self.start_rect.width()
+        new_height = self.start_rect.height()
+        
+        # ハンドルタイプに応じて調整
+        if "left" in self.handle_type:
+            # 左側のハンドル: 左端を移動（幅を調整）
+            new_x = self.start_item_pos.x() + delta_x
+            new_width = self.start_rect.width() - delta_x
+        elif "right" in self.handle_type:
+            # 右側のハンドル: 右端を移動（幅を調整）
+            new_width = self.start_rect.width() + delta_x
+        
+        if "top" in self.handle_type:
+            # 上側のハンドル: 上端を移動（高さを調整）
+            new_y = self.start_item_pos.y() + delta_y
+            new_height = self.start_rect.height() - delta_y
+        elif "bottom" in self.handle_type:
+            # 下側のハンドル: 下端を移動（高さを調整）
+            new_height = self.start_rect.height() + delta_y
+        
+        # 最小サイズ制限
+        if new_width < 20:
+            new_width = 20
+            if "left" in self.handle_type:
+                new_x = self.start_item_pos.x() + self.start_rect.width() - 20
+        
+        if new_height < 20:
+            new_height = 20
+            if "top" in self.handle_type:
+                new_y = self.start_item_pos.y() + self.start_rect.height() - 20
+        
+        # 図形を更新
+        item.setPos(new_x, new_y)
+        
+        # 矩形または楕円のサイズを更新
+        if hasattr(item, 'setRect'):
+            item.setRect(0, 0, new_width, new_height)
+        
+        # 他のハンドルの位置も更新（リアルタイム更新）
+        self.update_other_handles()
+    
+    def update_other_handles(self):
+        """他のハンドルの位置を更新"""
+        item = self.parent_shape.get_item()
+        rect = item.boundingRect()
+        pos = item.pos()
+        
+        positions = [
+            (pos.x() + rect.left(), pos.y() + rect.top()),      # 左上
+            (pos.x() + rect.center().x(), pos.y() + rect.top()),  # 上中央
+            (pos.x() + rect.right(), pos.y() + rect.top()),     # 右上
+            (pos.x() + rect.right(), pos.y() + rect.center().y()),  # 右中央
+            (pos.x() + rect.right(), pos.y() + rect.bottom()),  # 右下
+            (pos.x() + rect.center().x(), pos.y() + rect.bottom()),  # 下中央
+            (pos.x() + rect.left(), pos.y() + rect.bottom()),   # 左下
+            (pos.x() + rect.left(), pos.y() + rect.center().y()),  # 左中央
+        ]
+        
+        # 現在ドラッグ中のハンドル以外を更新
+        for i, handle in enumerate(self.parent_shape.handles):
+            if handle != self.handle_item:
+                x, y = positions[i]
+                handle.setPos(x - self.parent_shape.handle_size/2, 
+                            y - self.parent_shape.handle_size/2)
+    
+    def update_original_size(self):
+        """リサイズ後のサイズを元座標に反映"""
+        item = self.parent_shape.get_item()
+        rect = item.boundingRect()
+        pos = item.pos()
+        
+        # 現在のスケールで割って元座標を更新
+        scale = self.parent_shape.scene_scale
+        self.parent_shape.original_x = pos.x() / scale
+        self.parent_shape.original_y = pos.y() / scale
+        self.parent_shape.original_width = rect.width() / scale
+        self.parent_shape.original_height = rect.height() / scale
+    
+    def hoverEnterEvent(self, event):
+        """ホバー時にハンドルを強調表示"""
+        self.handle_item.setBrush(QBrush(QColor(100, 200, 255)))
+        self.handle_item.setPen(QPen(QColor(0, 0, 0), 2))
+        
+        # カーソルを変更（リサイズカーソル）
+        from PySide6.QtCore import Qt
+        if self.handle_type in ["top_left", "bottom_right"]:
+            self.handle_item.setCursor(Qt.SizeFDiagCursor)
+        elif self.handle_type in ["top_right", "bottom_left"]:
+            self.handle_item.setCursor(Qt.SizeBDiagCursor)
+        elif self.handle_type in ["top_center", "bottom_center"]:
+            self.handle_item.setCursor(Qt.SizeVerCursor)
+        elif self.handle_type in ["middle_left", "middle_right"]:
+            self.handle_item.setCursor(Qt.SizeHorCursor)
+        
+        QGraphicsRectItem.hoverEnterEvent(self.handle_item, event)
+    
+    def hoverLeaveEvent(self, event):
+        """ホバー終了時に元の色に戻す"""
+        self.handle_item.setBrush(QBrush(QColor(255, 255, 255)))
+        self.handle_item.setPen(QPen(QColor(0, 0, 0), 1))
+        self.handle_item.setCursor(Qt.ArrowCursor)
+        
+        QGraphicsRectItem.hoverLeaveEvent(self.handle_item, event)
 
 
 class CenterControlPointHover:
@@ -946,14 +1145,28 @@ class ImageCanvas(QGraphicsView):
             if self.temp_item:
                 self.scene.addItem(self.temp_item)
         elif event.button() == Qt.LeftButton:
-            # 描画モードでない場合、最も近い制御点を探して選択
+            # クリック位置のアイテムを取得
             click_pos = self.mapToScene(event.pos())
-            # 制御点がクリックされなかった場合は全選択解除
-            if not self.select_nearest_control_point(click_pos):
-                # 全パーツの選択を解除
+            clicked_item = self.scene.itemAt(click_pos, self.transform())
+            
+            # クリックされたアイテムがリサイズハンドルかチェック
+            is_resize_handle = False
+            if clicked_item:
+                # 選択中の図形のハンドルかチェック
                 for shape in self.shapes:
-                    shape.set_selected(False)
-                self.selected_shape = None
+                    if shape.is_selected and clicked_item in shape.handles:
+                        is_resize_handle = True
+                        break
+            
+            # リサイズハンドルがクリックされた場合は選択解除しない
+            if not is_resize_handle:
+                # 描画モードでない場合、最も近い制御点を探して選択
+                # 制御点がクリックされなかった場合は全選択解除
+                if not self.select_nearest_control_point(click_pos):
+                    # 全パーツの選択を解除
+                    for shape in self.shapes:
+                        shape.set_selected(False)
+                    self.selected_shape = None
                     
         super().mousePressEvent(event)
     
