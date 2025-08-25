@@ -6,13 +6,16 @@ CONFIGモード用メインビューコンポーネント
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, 
-    QGroupBox, QGridLayout, QFrame
+    QGroupBox, QGridLayout, QFrame, QScrollArea
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QFont, QPixmap
 
 from models.app_state import AppState, ConnectionStatus
 from typing import Dict, Any, Optional
+import base64
+import time
+from io import BytesIO
 
 
 class ConfigView(QWidget):
@@ -26,6 +29,16 @@ class ConfigView(QWidget):
         self.config_displayed = False
         self.connection_status = ConnectionStatus()
         self.main_widget = self
+        
+        # 画像プレビュー関連
+        self.image_label = None
+        self.current_pixmap = None
+        
+        # FPS計測用
+        self.last_frame_time = time.time()
+        self.fps_counter = 0
+        self.fps_start_time = time.time()
+        self.current_fps = 0.0
         
         self._setup_ui()
     
@@ -42,13 +55,21 @@ class ConfigView(QWidget):
         # メインコンテンツ
         content_layout = QHBoxLayout()
         
-        # 左側：設定情報表示
+        # 左側：設定情報と接続状態
+        left_layout = QVBoxLayout()
         config_info_group = self._create_config_info_section()
-        content_layout.addWidget(config_info_group)
-        
-        # 右側：接続状態表示
         status_group = self._create_status_section()
-        content_layout.addWidget(status_group)
+        left_layout.addWidget(config_info_group)
+        left_layout.addWidget(status_group)
+        
+        left_widget = QWidget()
+        left_widget.setLayout(left_layout)
+        left_widget.setMaximumWidth(400)
+        content_layout.addWidget(left_widget)
+        
+        # 右側：画像プレビュー
+        preview_group = self._create_image_preview_section()
+        content_layout.addWidget(preview_group, 1)  # 拡張可能
         
         main_layout.addLayout(content_layout)
         
@@ -180,6 +201,39 @@ CONFIGモードでの主な操作：
         group.setLayout(layout)
         return group
     
+    def _create_image_preview_section(self) -> QGroupBox:
+        """画像プレビューセクション"""
+        group = QGroupBox("MQTT画像プレビュー")
+        layout = QVBoxLayout()
+        
+        # 画像表示ラベル
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumSize(400, 300)
+        self.image_label.setStyleSheet("""
+            QLabel {
+                background-color: #f5f5f5;
+                border: 2px dashed #ccc;
+                border-radius: 8px;
+            }
+        """)
+        self.image_label.setText("MQTT接続完了後、ここに画像が表示されます")
+        
+        # スクロール可能にする
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(self.image_label)
+        scroll_area.setWidgetResizable(True)
+        
+        layout.addWidget(scroll_area)
+        
+        # 画像情報表示
+        self.image_info_label = QLabel("画像情報: 未受信")
+        self.image_info_label.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(self.image_info_label)
+        
+        group.setLayout(layout)
+        return group
+    
     def show_config_info(self, config_data: Dict[str, Any]):
         """設定情報を表示"""
         try:
@@ -238,3 +292,60 @@ CONFIGモードでの主な操作：
                 else:
                     label.setStyleSheet("color: #FF5722; font-size: 16px;")  # 赤
                     label.setToolTip(f"{service.upper()}: 未接続")
+    
+    @Slot(str)
+    def update_image(self, image_data: str):
+        """MQTT画像を更新"""
+        try:
+            print(f"ConfigView.update_image called with data length: {len(image_data)}")
+            
+            # Base64デコード
+            image_bytes = base64.b64decode(image_data)
+            print(f"Decoded image bytes length: {len(image_bytes)}")
+            
+            # QPixmapに変換
+            pixmap = QPixmap()
+            pixmap.loadFromData(image_bytes)
+            
+            if pixmap.isNull():
+                print("Failed to load image data into QPixmap")
+                return
+            
+            print(f"Image loaded - size: {pixmap.width()} x {pixmap.height()}")
+            
+            # 表示サイズに調整（アスペクト比維持）
+            max_width = 600
+            max_height = 400
+            scaled_pixmap = pixmap.scaled(
+                max_width, max_height, 
+                Qt.KeepAspectRatio, 
+                Qt.SmoothTransformation
+            )
+            
+            # 画像表示を更新
+            self.image_label.setPixmap(scaled_pixmap)
+            
+            # FPS計測
+            self._update_fps_counter()
+            
+            # 画像情報を更新
+            info_text = (f"画像情報: {pixmap.width()} x {pixmap.height()}, "
+                        f"FPS: {self.current_fps:.1f}")
+            self.image_info_label.setText(info_text)
+            
+            print("Image display updated successfully")
+            
+        except Exception as e:
+            print(f"Image update error: {e}")
+            self.image_label.setText(f"画像表示エラー: {str(e)}")
+    
+    def _update_fps_counter(self):
+        """FPS計測を更新"""
+        current_time = time.time()
+        self.fps_counter += 1
+        
+        # 1秒ごとにFPS計算
+        if current_time - self.fps_start_time >= 1.0:
+            self.current_fps = self.fps_counter / (current_time - self.fps_start_time)
+            self.fps_counter = 0
+            self.fps_start_time = current_time

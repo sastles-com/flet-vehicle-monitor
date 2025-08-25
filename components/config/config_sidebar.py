@@ -20,7 +20,6 @@ class ConfigSidebar(QWidget):
     
     # シグナル定義
     config_loaded = Signal(dict)  # 設定読み込み完了時
-    connection_test_requested = Signal()  # 接続テスト要求時
     
     def __init__(self, app_state: AppState, width: int = 320, parent=None):
         super().__init__(parent)
@@ -59,24 +58,6 @@ class ConfigSidebar(QWidget):
         form_group = self._create_config_form()
         main_layout.addWidget(form_group)
         
-        # 接続テストボタン
-        test_button = QPushButton("接続テスト実行")
-        test_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 8px;
-                font-weight: bold;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
-        test_button.clicked.connect(self.connection_test_requested.emit)
-        main_layout.addWidget(test_button)
-        
         # スペーサー
         main_layout.addStretch()
         
@@ -110,53 +91,103 @@ class ConfigSidebar(QWidget):
     def _create_config_form(self) -> QGroupBox:
         """設定フォーム作成"""
         group = QGroupBox("設定詳細")
-        form_layout = QFormLayout()
+        main_layout = QVBoxLayout()
         
-        # MQTT設定
+        # MQTT設定セクション
         mqtt_label = QLabel("MQTT設定")
-        mqtt_label.setStyleSheet("font-weight: bold; color: #666;")
-        form_layout.addRow(mqtt_label)
+        mqtt_label.setStyleSheet("font-weight: bold; color: white; font-size: 14px; margin-bottom: 5px;")
+        main_layout.addWidget(mqtt_label)
         
+        # テキストボックスのサイズを半分に設定
         self.config_form_fields['mqtt_host'] = QLineEdit()
+        self.config_form_fields['mqtt_host'].setMaximumWidth(150)
         self.config_form_fields['mqtt_port'] = QLineEdit()
+        self.config_form_fields['mqtt_port'].setMaximumWidth(150)
         self.config_form_fields['mqtt_wsport'] = QLineEdit()
+        self.config_form_fields['mqtt_wsport'].setMaximumWidth(150)
         
-        form_layout.addRow("MQTT Host:", self.config_form_fields['mqtt_host'])
-        form_layout.addRow("MQTT Port:", self.config_form_fields['mqtt_port'])
-        form_layout.addRow("WebSocket Port:", self.config_form_fields['mqtt_wsport'])
+        # QFormLayoutではなく、手動でラベルとテキストボックスを配置
+        mqtt_host_layout = QHBoxLayout()
+        mqtt_host_label = QLabel("MQTT Host:")
+        mqtt_host_label.setStyleSheet("color: white; min-width: 120px;")
+        mqtt_host_layout.addWidget(mqtt_host_label)
+        mqtt_host_layout.addWidget(self.config_form_fields['mqtt_host'])
+        mqtt_host_layout.addStretch()
+        main_layout.addLayout(mqtt_host_layout)
+        
+        mqtt_port_layout = QHBoxLayout()
+        mqtt_port_label = QLabel("MQTT Port:")
+        mqtt_port_label.setStyleSheet("color: white; min-width: 120px;")
+        mqtt_port_layout.addWidget(mqtt_port_label)
+        mqtt_port_layout.addWidget(self.config_form_fields['mqtt_port'])
+        mqtt_port_layout.addStretch()
+        main_layout.addLayout(mqtt_port_layout)
+        
+        ws_port_layout = QHBoxLayout()
+        ws_port_label = QLabel("WebSocket Port:")
+        ws_port_label.setStyleSheet("color: white; min-width: 120px;")
+        ws_port_layout.addWidget(ws_port_label)
+        ws_port_layout.addWidget(self.config_form_fields['mqtt_wsport'])
+        ws_port_layout.addStretch()
+        main_layout.addLayout(ws_port_layout)
         
         # 区切り線
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Sunken)
-        form_layout.addRow(line)
+        line.setStyleSheet("color: #666;")
+        main_layout.addWidget(line)
         
-        # RestAPI設定
+        # RestAPI設定セクション
         rest_label = QLabel("RestAPI設定")
-        rest_label.setStyleSheet("font-weight: bold; color: #666;")
-        form_layout.addRow(rest_label)
+        rest_label.setStyleSheet("font-weight: bold; color: white; font-size: 14px; margin-bottom: 5px; margin-top: 10px;")
+        main_layout.addWidget(rest_label)
         
         self.config_form_fields['restapi_host'] = QLineEdit()
+        self.config_form_fields['restapi_host'].setMaximumWidth(150)
         self.config_form_fields['restapi_port'] = QLineEdit()
+        self.config_form_fields['restapi_port'].setMaximumWidth(150)
         
-        form_layout.addRow("REST Host:", self.config_form_fields['restapi_host'])
-        form_layout.addRow("REST Port:", self.config_form_fields['restapi_port'])
+        rest_host_layout = QHBoxLayout()
+        rest_host_label = QLabel("REST Host:")
+        rest_host_label.setStyleSheet("color: white; min-width: 120px;")
+        rest_host_layout.addWidget(rest_host_label)
+        rest_host_layout.addWidget(self.config_form_fields['restapi_host'])
+        rest_host_layout.addStretch()
+        main_layout.addLayout(rest_host_layout)
+        
+        rest_port_layout = QHBoxLayout()
+        rest_port_label = QLabel("REST Port:")
+        rest_port_label.setStyleSheet("color: white; min-width: 120px;")
+        rest_port_layout.addWidget(rest_port_label)
+        rest_port_layout.addWidget(self.config_form_fields['restapi_port'])
+        rest_port_layout.addStretch()
+        main_layout.addLayout(rest_port_layout)
         
         # 区切り線
         line2 = QFrame()
         line2.setFrameShape(QFrame.HLine)
         line2.setFrameShadow(QFrame.Sunken)
-        form_layout.addRow(line2)
+        line2.setStyleSheet("color: #666;")
+        main_layout.addWidget(line2)
         
-        # その他設定
+        # その他設定セクション
         other_label = QLabel("その他")
-        other_label.setStyleSheet("font-weight: bold; color: #666;")
-        form_layout.addRow(other_label)
+        other_label.setStyleSheet("font-weight: bold; color: white; font-size: 14px; margin-bottom: 5px; margin-top: 10px;")
+        main_layout.addWidget(other_label)
         
         self.config_form_fields['bench_name'] = QLineEdit()
-        form_layout.addRow("ベンチ名:", self.config_form_fields['bench_name'])
+        self.config_form_fields['bench_name'].setMaximumWidth(150)
         
-        group.setLayout(form_layout)
+        bench_layout = QHBoxLayout()
+        bench_label = QLabel("ベンチ名:")
+        bench_label.setStyleSheet("color: white; min-width: 120px;")
+        bench_layout.addWidget(bench_label)
+        bench_layout.addWidget(self.config_form_fields['bench_name'])
+        bench_layout.addStretch()
+        main_layout.addLayout(bench_layout)
+        
+        group.setLayout(main_layout)
         return group
     
     def _connect_signals(self):
@@ -249,3 +280,12 @@ class ConfigSidebar(QWidget):
         if field_name in self.config_form_fields:
             return self.config_form_fields[field_name].text()
         return ""
+    
+    def clear_all_fields(self):
+        """全フィールドをクリア"""
+        try:
+            for field_name in self.config_form_fields:
+                self.config_form_fields[field_name].setText("")
+            print("全設定フィールドをクリアしました")
+        except Exception as e:
+            print(f"フィールドクリアエラー: {e}")
