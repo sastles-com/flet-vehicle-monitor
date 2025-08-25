@@ -66,7 +66,25 @@ class DesignTokens:
             'on_surface_disabled': '#6D6D6D',   # 無効テキスト
             'border': '#484848',       # ボーダー色
             'border_light': '#5A5A5A', # 明るいボーダー
-            'shadow': 'rgba(0,0,0,0.3)'  # 影
+            'border_secondary': '#3A3A3A', # セカンダリボーダー
+            'shadow': 'rgba(0,0,0,0.3)',  # 影
+            
+            # テキスト色
+            'text_primary': '#FFFFFF',
+            'text_secondary': '#B0B0B0',
+            'text_disabled': '#6D6D6D',
+            
+            # プライマリー色
+            'primary': '#3F51B5',
+            'primary_hover': '#3949AB',
+            'primary_pressed': '#303F9F',
+            
+            # ステート色
+            'success': '#4CAF50',
+            'success_border': '#66BB6A',
+            'warning': '#FFA726',
+            'error': '#EF5350',
+            'info': '#42A5F5'
         },
         
         # Semantic Colors (ダークモード適応)
@@ -75,6 +93,14 @@ class DesignTokens:
             'warning': '#FFA726',      # 警告
             'error': '#EF5350',        # エラー
             'info': '#42A5F5'          # 情報
+        },
+        
+        # Red Colors (STOP状態用)
+        'red': {
+            500: '#F44336',  # ベース
+            600: '#E53935',
+            700: '#D32F2F',
+            800: '#C62828'
         }
     }
     
