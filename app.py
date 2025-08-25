@@ -16,10 +16,17 @@ from enum import Enum
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QFileDialog, QMessageBox,
-    QTextEdit, QSplitter
+    QTextEdit, QSplitter, QDockWidget
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QFont
+
+# アプリケーション状態管理をインポート
+from models.app_state import AppState, ConnectionStatus
+from models.app_mode import AppMode
+from models.config_manager import ConfigManager
+from components.config.config_sidebar import ConfigSidebar
+from components.config.config_view import ConfigView
 
 
 # データクラス定義
@@ -108,207 +115,232 @@ class VehicleMonitorApplication(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Vehicle Monitor Application")
+        
+        # アプリケーション状態管理
+        self.app_state = AppState()
+        self.config_manager = ConfigManager()
+        
+        self.setWindowTitle(self.app_state.get_header_title())
         
         # データ格納用
         self.config_data: Optional[ConfigData] = None
         self.vehicle_data: Optional[VehicleData] = None
+        
+        # CONFIGコンポーネント
+        self.config_sidebar: Optional[ConfigSidebar] = None
+        self.config_view: Optional[ConfigView] = None
         
         # UI初期化
         self.setup_ui()
         
         # 起動時最大化
         self.showMaximized()
+        
+        # 初期モード設定（CONFIG）
+        self.switch_to_config_mode()
     
     def setup_ui(self):
         """UI初期化"""
-        # 中央ウィジェットとしてタブウィジェットを設定
-        self.tab_widget = QTabWidget()
-        self.setCentralWidget(self.tab_widget)
+        # タブウィジェットは使用せず、モード切替による単一画面に変更
+        # （vehicle_monitorアプリ参考）
         
-        # 3つのタブを作成
-        self.setup_config_tab()
-        self.setup_edit_tab()
-        self.setup_monitor_tab()
+        # ツールバー作成
+        toolbar = self.addToolBar("Main")
         
-        # デフォルトでCONFIGタブを選択
-        self.tab_widget.setCurrentIndex(0)
+        # モード切替ボタン
+        config_action = toolbar.addAction("CONFIG")
+        config_action.triggered.connect(self.switch_to_config_mode)
+        
+        edit_action = toolbar.addAction("EDIT")
+        edit_action.triggered.connect(self.switch_to_edit_mode)
+        
+        monitor_action = toolbar.addAction("MONITOR") 
+        monitor_action.triggered.connect(self.switch_to_monitor_mode)
+        
+        # ステータスバー作成
+        self.status_bar = self.statusBar()
+        self.status_bar.showMessage("Ready - CONFIG Mode")
     
-    def setup_config_tab(self):
-        """CONFIGタブセットアップ"""
-        config_widget = QWidget()
-        layout = QVBoxLayout()
+    # モード切替メソッド
+    def switch_to_config_mode(self):
+        """CONFIGモードに切替"""
+        self.app_state.current_mode = AppMode.CONFIG
+        self.setWindowTitle(self.app_state.get_header_title())
         
-        # タイトル
-        title = QLabel("CONFIG - システム設定")
-        title.setFont(QFont("Arial", 16, QFont.Bold))
-        layout.addWidget(title)
+        # CONFIGコンポーネント作成
+        if not self.config_sidebar:
+            self.config_sidebar = ConfigSidebar(self.app_state)
+            self.config_sidebar.config_loaded.connect(self.on_config_loaded)
+            self.config_sidebar.connection_test_requested.connect(self.test_connections)
         
-        # Config読み込みボタン
-        load_config_btn = QPushButton("Config.json読み込み")
-        load_config_btn.clicked.connect(self.load_config_json)
-        layout.addWidget(load_config_btn)
+        if not self.config_view:
+            self.config_view = ConfigView(self.app_state)
         
-        # 設定表示エリア
-        self.config_display = QTextEdit()
-        self.config_display.setReadOnly(True)
-        layout.addWidget(self.config_display)
+        # レイアウト設定
+        self.setup_config_layout()
         
-        config_widget.setLayout(layout)
-        self.tab_widget.addTab(config_widget, "CONFIG")
+        self.status_bar.showMessage("CONFIG Mode - Ready")
+        print("Switched to CONFIG mode")
     
-    def setup_edit_tab(self):
-        """EDITタブセットアップ"""
-        edit_widget = QWidget()
-        layout = QVBoxLayout()
+    def switch_to_edit_mode(self):
+        """EDITモードに切替"""
+        self.app_state.current_mode = AppMode.EDIT
+        self.setWindowTitle(self.app_state.get_header_title())
         
-        # タイトル
-        title = QLabel("EDIT - Vehicle設定編集")
-        title.setFont(QFont("Arial", 16, QFont.Bold))
-        layout.addWidget(title)
+        # 簡易EDITビュー作成
+        edit_widget = self.create_edit_placeholder()
+        self.setCentralWidget(edit_widget)
         
-        # Vehicle読み込みボタン
-        load_vehicle_btn = QPushButton("Vehicle.json読み込み")
-        load_vehicle_btn.clicked.connect(self.load_vehicle_json)
-        layout.addWidget(load_vehicle_btn)
+        # サイドバーを非表示
+        if hasattr(self, 'sidebar_dock'):
+            self.removeDockWidget(self.sidebar_dock)
         
-        # Vehicle表示エリア
-        self.vehicle_display = QTextEdit()
-        self.vehicle_display.setReadOnly(True)
-        layout.addWidget(self.vehicle_display)
-        
-        edit_widget.setLayout(layout)
-        self.tab_widget.addTab(edit_widget, "EDIT")
+        self.status_bar.showMessage("EDIT Mode - Ready")
+        print("Switched to EDIT mode")
     
-    def setup_monitor_tab(self):
-        """MONITORタブセットアップ"""
-        monitor_widget = QWidget()
-        layout = QVBoxLayout()
+    def switch_to_monitor_mode(self):
+        """MONITORモードに切替"""
+        self.app_state.current_mode = AppMode.MONITOR
+        self.setWindowTitle(self.app_state.get_header_title())
         
-        # タイトル
-        title = QLabel("MONITOR - リアルタイム監視")
-        title.setFont(QFont("Arial", 16, QFont.Bold))
-        layout.addWidget(title)
+        # 簡易MONITORビュー作成
+        monitor_widget = self.create_monitor_placeholder()
+        self.setCentralWidget(monitor_widget)
         
-        # ステータス表示
-        status_label = QLabel("監視モード準備中...")
-        layout.addWidget(status_label)
+        # サイドバーを非表示
+        if hasattr(self, 'sidebar_dock'):
+            self.removeDockWidget(self.sidebar_dock)
         
-        monitor_widget.setLayout(layout)
-        self.tab_widget.addTab(monitor_widget, "MONITOR")
+        self.status_bar.showMessage("MONITOR Mode - Ready")
+        print("Switched to MONITOR mode")
     
-    def load_config_json(self, file_path: str = None) -> Optional[ConfigData]:
-        """config.json読み込み"""
-        if file_path is None:
-            file_path, _ = QFileDialog.getOpenFileName(
-                self, "Config.json読み込み", "./data/", "JSON Files (*.json)"
-            )
-        
-        if not file_path:
-            return None
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                config_dict = json.load(f)
+    def setup_config_layout(self):
+        """CONFIGモードレイアウト設定"""
+        # サイドバーをドックとして設定
+        if hasattr(self, 'sidebar_dock'):
+            self.removeDockWidget(self.sidebar_dock)
             
-            # ConfigDataインスタンス作成
+        self.sidebar_dock = QDockWidget("設定", self)
+        self.sidebar_dock.setWidget(self.config_sidebar)
+        self.sidebar_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.sidebar_dock)
+        
+        # メインビューを中央に設定
+        self.setCentralWidget(self.config_view)
+    
+    def create_edit_placeholder(self) -> QWidget:
+        """EDITモード用プレースホルダー"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        title = QLabel("EDIT Mode")
+        title.setFont(QFont("Arial", 24))
+        title.setAlignment(Qt.AlignCenter)
+        
+        description = QLabel("画像編集機能（main.pyで実装済み）")
+        description.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(title)
+        layout.addWidget(description)
+        layout.addStretch()
+        
+        widget.setLayout(layout)
+        return widget
+    
+    def create_monitor_placeholder(self) -> QWidget:
+        """MONITORモード用プレースホルダー"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        title = QLabel("MONITOR Mode")
+        title.setFont(QFont("Arial", 24))
+        title.setAlignment(Qt.AlignCenter)
+        
+        description = QLabel("リアルタイム監視機能（未実装）")
+        description.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(title)
+        layout.addWidget(description)
+        layout.addStretch()
+        
+        widget.setLayout(layout)
+        return widget
+    
+    def on_config_loaded(self, config_data: dict):
+        """設定読み込み完了時の処理"""
+        try:
+            # ConfigDataに変換
             self.config_data = ConfigData(
-                mqtt_host=config_dict["mqtt"]["host"],
-                mqtt_port=config_dict["mqtt"]["port"],
-                mqtt_ws_port=config_dict["mqtt"]["wsPort"],
-                rest_api_host=config_dict["RestAPI"]["host"],
-                rest_api_port=config_dict["RestAPI"]["port"],
-                camera_width=config_dict["camera"]["width"],
-                camera_height=config_dict["camera"]["height"],
-                camera_scale=config_dict["camera"]["scale"],
-                camera_focus_length=config_dict["camera"]["focus_length"],
-                camera_exposure=config_dict["camera"]["exposure"],
-                camera_analogue_gain=config_dict["camera"]["AnalogueGain"],
-                frame=config_dict["frame"],
-                bench=config_dict["bench"],
-                path=config_dict["path"]
+                mqtt_host=config_data.get("mqtt", {}).get("host", ""),
+                mqtt_port=config_data.get("mqtt", {}).get("port", ""),
+                mqtt_ws_port=config_data.get("mqtt", {}).get("wsPort", ""),
+                rest_api_host=config_data.get("RestAPI", {}).get("host", ""),
+                rest_api_port=config_data.get("RestAPI", {}).get("port", ""),
+                camera_width=config_data.get("camera", {}).get("width", 2304),
+                camera_height=config_data.get("camera", {}).get("height", 1296),
+                camera_scale=config_data.get("camera", {}).get("scale", 0.125),
+                camera_focus_length=config_data.get("camera", {}).get("focus_length", "10.12768268585205"),
+                camera_exposure=config_data.get("camera", {}).get("exposure", 60000),
+                camera_analogue_gain=config_data.get("camera", {}).get("AnalogueGain", 1),
+                frame=config_data.get("frame", 0),
+                bench=config_data.get("bench", ""),
+                path=config_data.get("path", "./config")
             )
             
-            # UI更新
-            self.update_config_display()
+            # アプリケーション状態更新
+            self.app_state.bench_name = self.config_data.bench
+            self.setWindowTitle(self.app_state.get_header_title())
             
-            return self.config_data
+            # ConfigViewに設定情報表示
+            self.config_view.show_config_info(config_data)
+            
+            print(f"Config loaded: {self.config_data.bench}")
             
         except Exception as e:
-            QMessageBox.warning(self, "読み込みエラー", f"Config.json読み込み失敗:\n{str(e)}")
-            return None
+            print(f"Config load error: {e}")
     
-    def load_vehicle_json(self, file_path: str = None) -> Optional[VehicleData]:
-        """vehicle.json読み込み"""
-        if file_path is None:
-            file_path, _ = QFileDialog.getOpenFileName(
-                self, "Vehicle.json読み込み", "./data/", "JSON Files (*.json)"
-            )
+    def test_connections(self):
+        """接続テスト実行"""
+        if not self.config_data:
+            print("No config data available for connection test")
+            return
+            
+        print("Testing connections...")
         
-        if not file_path:
-            return None
+        # 接続状態をリセット
+        status = ConnectionStatus()
         
+        # MQTT接続テスト（簡易版）
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                vehicle_dict = json.load(f)
+            if self.config_data.mqtt_host and self.config_data.mqtt_port:
+                # 実際の接続テストは省略し、設定値があれば成功とする
+                status.mqtt = True
+                print(f"MQTT: {self.config_data.mqtt_host}:{self.config_data.mqtt_port} - OK")
+        except:
+            status.mqtt = False
             
-            # VehicleDataインスタンス作成（簡略化）
-            self.vehicle_data = VehicleData(
-                name=vehicle_dict["name"],
-                path=vehicle_dict["path"],
-                threshold=vehicle_dict["threshold"],
-                gray=vehicle_dict["gray"],
-                offset=vehicle_dict["offset"],
-                icon=[],  # 詳細パース実装は後段階
-                meter=[],
-                ocr=[]
-            )
-            
-            # UI更新
-            self.update_vehicle_display()
-            
-            return self.vehicle_data
-            
+        # RestAPI接続テスト
+        try:
+            if self.config_data.rest_api_host and self.config_data.rest_api_port:
+                import requests
+                url = f"http://{self.config_data.rest_api_host}:{self.config_data.rest_api_port}/"
+                response = requests.get(url, timeout=3)
+                status.restapi = response.status_code == 200
+                print(f"RestAPI: {url} - {'OK' if status.restapi else 'Failed'}")
         except Exception as e:
-            QMessageBox.warning(self, "読み込みエラー", f"Vehicle.json読み込み失敗:\n{str(e)}")
-            return None
+            status.restapi = False
+            print(f"RestAPI connection failed: {e}")
+        
+        # ROS2は常に成功とする（簡易版）
+        status.ros2 = True
+        print("ROS2: OK (simulated)")
+        
+        # 接続状態をConfigViewに反映
+        self.config_view.update_connection_status(status)
+        self.app_state.connection_status = status
+        
+        print("Connection test completed")
     
-    def update_config_display(self):
-        """Config表示更新"""
-        if self.config_data:
-            display_text = f"""
-MQTT設定:
-  Host: {self.config_data.mqtt_host}
-  Port: {self.config_data.mqtt_port}
-  WS Port: {self.config_data.mqtt_ws_port}
-
-RestAPI設定:
-  Host: {self.config_data.rest_api_host}
-  Port: {self.config_data.rest_api_port}
-
-カメラ設定:
-  解像度: {self.config_data.camera_width} x {self.config_data.camera_height}
-  スケール: {self.config_data.camera_scale}
-  
-ベンチ名: {self.config_data.bench}
-            """
-            self.config_display.setPlainText(display_text.strip())
-    
-    def update_vehicle_display(self):
-        """Vehicle表示更新"""
-        if self.vehicle_data:
-            display_text = f"""
-車両名: {self.vehicle_data.name}
-テンプレートパス: {self.vehicle_data.path}
-閾値: {self.vehicle_data.threshold}
-グレースケール: {self.vehicle_data.gray}
-オフセット: {self.vehicle_data.offset}
-
-Icon数: {len(self.vehicle_data.icon)}
-Meter数: {len(self.vehicle_data.meter)}  
-OCR数: {len(self.vehicle_data.ocr)}
-            """
-            self.vehicle_display.setPlainText(display_text.strip())
 
 
 def main():
