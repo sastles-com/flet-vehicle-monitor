@@ -595,6 +595,10 @@ class ResizeHandle:
                 # リサイズ完了後なので再描画が必要
                 self.parent_shape.update_circumference_display()
             
+            # バー形状の場合は形状を更新（アスペクト比変更に対応）
+            if hasattr(self.parent_shape, 'update_shape_on_resize'):
+                self.parent_shape.update_shape_on_resize()
+            
             # デフォルトの処理を実行
             QGraphicsRectItem.mouseReleaseEvent(self.handle_item, event)
     
@@ -877,136 +881,227 @@ class CircumferencePointItem(QGraphicsEllipseItem):
         
     def mouseMoveEvent(self, event):
         if self.is_dragging:
-            # 円の中心と半径を取得
-            rect = self.parent_ellipse.ellipse_item.boundingRect()
-            pos = self.parent_ellipse.ellipse_item.pos()
-            center_x = pos.x() + rect.width() / 2
-            center_y = pos.y() + rect.height() / 2
-            radius = rect.width() / 2
-            
-            # デバッグ出力
-            if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Circle center: ({center_x:.2f}, {center_y:.2f})")
-            if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Circle pos: ({pos.x():.2f}, {pos.y():.2f})")
-            if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Circle rect: {rect.width():.2f} x {rect.height():.2f}")
-            if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Radius: {radius:.2f}")
-            
-            # マウス位置から角度を計算
-            mouse_pos = event.scenePos()
-            dx = mouse_pos.x() - center_x
-            dy = mouse_pos.y() - center_y
-            
-            import math
-            # マウス位置の角度を計算
-            mouse_angle = math.atan2(dy, dx)
-            
-            # 前回の角度との差を計算して連続回転を判定
-            if hasattr(self.point_data, '_last_angle'):
-                angle_diff = mouse_angle - self.point_data._last_angle
-                
-                # 角度の不連続性を検出（-π〜πの境界をまたぐ場合）
-                if angle_diff > math.pi:
-                    angle_diff -= 2 * math.pi
-                elif angle_diff < -math.pi:
-                    angle_diff += 2 * math.pi
-                
-                # 累積角度を更新（360度以上の回転を記録）
-                if hasattr(self.point_data, '_accumulated_angle'):
-                    self.point_data._accumulated_angle += angle_diff
-                else:
-                    self.point_data._accumulated_angle = mouse_angle
+            # 親の図形タイプをチェック
+            if isinstance(self.parent_ellipse, BarShapeItem):
+                self.handle_bar_drag(event)
             else:
-                # 初回の場合
+                self.handle_circle_drag(event)
+            
+    def handle_circle_drag(self, event):
+        """円形の場合のドラッグ処理"""
+        # 円の中心と半径を取得
+        rect = self.parent_ellipse.ellipse_item.boundingRect()
+        pos = self.parent_ellipse.ellipse_item.pos()
+        center_x = pos.x() + rect.width() / 2
+        center_y = pos.y() + rect.height() / 2
+        radius = rect.width() / 2
+        
+        # デバッグ出力
+        if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Circle center: ({center_x:.2f}, {center_y:.2f})")
+        if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Circle pos: ({pos.x():.2f}, {pos.y():.2f})")
+        if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Circle rect: {rect.width():.2f} x {rect.height():.2f}")
+        if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Radius: {radius:.2f}")
+        
+        # マウス位置から角度を計算
+        mouse_pos = event.scenePos()
+        dx = mouse_pos.x() - center_x
+        dy = mouse_pos.y() - center_y
+        
+        import math
+        # マウス位置の角度を計算
+        mouse_angle = math.atan2(dy, dx)
+        
+        # 前回の角度との差を計算して連続回転を判定
+        if hasattr(self.point_data, '_last_angle'):
+            angle_diff = mouse_angle - self.point_data._last_angle
+            
+            # 角度の不連続性を検出（-π〜πの境界をまたぐ場合）
+            if angle_diff > math.pi:
+                angle_diff -= 2 * math.pi
+            elif angle_diff < -math.pi:
+                angle_diff += 2 * math.pi
+            
+            # 累積角度を更新（360度以上の回転を記録）
+            if hasattr(self.point_data, '_accumulated_angle'):
+                self.point_data._accumulated_angle += angle_diff
+            else:
                 self.point_data._accumulated_angle = mouse_angle
+        else:
+            # 初回の場合
+            self.point_data._accumulated_angle = mouse_angle
+        
+        self.point_data._last_angle = mouse_angle
+        
+        # 累積角度を0〜2πの範囲に正規化（表示用）
+        normalized_angle = self.point_data._accumulated_angle % (2 * math.pi)
+        if normalized_angle < 0:
+            normalized_angle += 2 * math.pi
+        
+        # 角度制約を適用（valueは変更しない、valueが小さいほど角度も小さく）
+        # circumferenceポイントをvalue順にソート
+        sorted_points = sorted(self.parent_ellipse.circumference_points, key=lambda p: p.value)
+        current_index = next((i for i, p in enumerate(sorted_points) if p == self.point_data), -1)
+        
+        # 各ポイントの現在の角度を取得
+        point_angles = []
+        for point in sorted_points:
+            if hasattr(point, '_calculated_angle'):
+                angle = point._calculated_angle
+                # 角度を0〜2πに正規化
+                if angle < 0:
+                    angle += 2 * math.pi
+                elif angle >= 2 * math.pi:
+                    angle = angle % (2 * math.pi)
+                point_angles.append(angle)
+            else:
+                # 初期角度がない場合はvalueから推定
+                point_angles.append(point.value * 2 * math.pi)
+        
+        # 角度制約を計算
+        min_angle = 0.0
+        max_angle = 2 * math.pi
+        margin = 0.05  # 約3度のマージン
+        
+        if current_index >= 0:
+            # 前のポイント（小さいvalue）: 小さいvalueは大きい角度なので、このポイントはそれより小さい角度でなければならない
+            if current_index > 0:
+                max_angle = point_angles[current_index - 1] - margin
             
-            self.point_data._last_angle = mouse_angle
+            # 次のポイント（大きいvalue）: 大きいvalueは小さい角度なので、このポイントはそれより大きい角度でなければならない
+            if current_index < len(sorted_points) - 1:
+                min_angle = point_angles[current_index + 1] + margin
             
-            # 累積角度を0〜2πの範囲に正規化（表示用）
-            normalized_angle = self.point_data._accumulated_angle % (2 * math.pi)
-            if normalized_angle < 0:
-                normalized_angle += 2 * math.pi
-            
-            # 角度制約を適用（valueは変更しない、valueが小さいほど角度も小さく）
-            # circumferenceポイントをvalue順にソート
-            sorted_points = sorted(self.parent_ellipse.circumference_points, key=lambda p: p.value)
-            current_index = next((i for i, p in enumerate(sorted_points) if p == self.point_data), -1)
-            
-            # 各ポイントの現在の角度を取得
-            point_angles = []
-            for point in sorted_points:
-                if hasattr(point, '_calculated_angle'):
-                    angle = point._calculated_angle
-                    # 角度を0〜2πに正規化
-                    if angle < 0:
-                        angle += 2 * math.pi
-                    elif angle >= 2 * math.pi:
-                        angle = angle % (2 * math.pi)
-                    point_angles.append(angle)
+            # 制約を適用
+            # min_angle > max_angle の場合は2πをまたいでいる
+            if min_angle >= max_angle:
+                # 2πをまたぐ場合は制約を緩和
+                if normalized_angle >= min_angle or normalized_angle <= max_angle:
+                    # 現在の角度が許可範囲内
+                    pass
                 else:
-                    # 初期角度がない場合はvalueから推定
-                    point_angles.append(point.value * 2 * math.pi)
-            
-            # 角度制約を計算
-            min_angle = 0.0
-            max_angle = 2 * math.pi
-            margin = 0.05  # 約3度のマージン
-            
-            if current_index >= 0:
-                # 前のポイント（小さいvalue）: 小さいvalueは大きい角度なので、このポイントはそれより小さい角度でなければならない
-                if current_index > 0:
-                    max_angle = point_angles[current_index - 1] - margin
-                
-                # 次のポイント（大きいvalue）: 大きいvalueは小さい角度なので、このポイントはそれより大きい角度でなければならない
-                if current_index < len(sorted_points) - 1:
-                    min_angle = point_angles[current_index + 1] + margin
-                
-                # 制約を適用
-                # min_angle > max_angle の場合は2πをまたいでいる
-                if min_angle >= max_angle:
-                    # 2πをまたぐ場合は制約を緩和
-                    if normalized_angle >= min_angle or normalized_angle <= max_angle:
-                        # 現在の角度が許可範囲内
-                        pass
+                    # 最も近い許可範囲の境界に移動
+                    dist_to_min = abs(normalized_angle - min_angle)
+                    dist_to_max = abs(normalized_angle - max_angle)
+                    if dist_to_min < dist_to_max:
+                        normalized_angle = min_angle
                     else:
-                        # 最も近い許可範囲の境界に移動
-                        dist_to_min = abs(normalized_angle - min_angle)
-                        dist_to_max = abs(normalized_angle - max_angle)
-                        if dist_to_min < dist_to_max:
-                            normalized_angle = min_angle
-                        else:
-                            normalized_angle = max_angle
+                        normalized_angle = max_angle
+            else:
+                # 通常の場合
+                normalized_angle = max(min_angle, min(max_angle, normalized_angle))
+        
+        # 制約された角度を使用
+        final_angle = normalized_angle
+        
+        # 円周上の座標を計算（制約された角度を使用）
+        new_x = center_x + radius * math.cos(final_angle)
+        new_y = center_y + radius * math.sin(final_angle)
+        
+        # このアイテムの位置を更新
+        marker_size = 32
+        self.setPos(new_x - marker_size/2, new_y - marker_size/2)
+        
+        # 対応するテキストアイテムも更新
+        try:
+            text_index = self.parent_ellipse.circumference_items.index(self) + 1
+            if text_index < len(self.parent_ellipse.circumference_items):
+                text_item = self.parent_ellipse.circumference_items[text_index]
+                text_offset = 30
+                text_x = center_x + (radius + text_offset) * math.cos(final_angle)
+                text_y = center_y + (radius + text_offset) * math.sin(final_angle)
+                text_item.setPos(text_x - 15, text_y - 15)
+        except (ValueError, IndexError):
+            pass
+        
+        # 元座標系での位置を更新
+        scale = self.parent_ellipse.scene_scale
+        self.point_data.position.x = new_x / scale
+        self.point_data.position.y = new_y / scale
+        
+        event.accept()
+    
+    def handle_bar_drag(self, event):
+        """バー形状の場合のドラッグ処理"""
+        # 矩形の情報を取得
+        rect = self.parent_ellipse.rect_item.boundingRect()
+        pos = self.parent_ellipse.rect_item.pos()
+        
+        # マウス位置を取得
+        mouse_pos = event.scenePos()
+        
+        # バーの向きに応じて制約
+        if self.parent_ellipse.orientation == "horizontal":
+            # 横長：縦分割線上に制約（x座標は固定、y座標のみ変更可能）
+            display_x = pos.x() + rect.width() / 2  # 分割線のx座標
+            # y座標をマウス位置に基づいて計算（矩形内に制約）
+            relative_y = max(0, min(1, (mouse_pos.y() - pos.y()) / rect.height()))
+            display_y = pos.y() + rect.height() * relative_y
+        else:
+            # 縦長：横分割線上に制約（y座標は固定、x座標のみ変更可能）
+            display_y = pos.y() + rect.height() / 2  # 分割線のy座標
+            # x座標をマウス位置に基づいて計算（矩形内に制約）
+            relative_x = max(0, min(1, (mouse_pos.x() - pos.x()) / rect.width()))
+            display_x = pos.x() + rect.width() * relative_x
+        
+        # value順序制約を適用
+        sorted_points = sorted(self.parent_ellipse.circumference_points, key=lambda p: p.value)
+        current_index = next((i for i, p in enumerate(sorted_points) if p == self.point_data), -1)
+        
+        # 相対位置からvalueを計算
+        if self.parent_ellipse.orientation == "horizontal":
+            target_value = (display_y - pos.y()) / rect.height()
+        else:
+            target_value = (display_x - pos.x()) / rect.width()
+        
+        # value制約を適用
+        if current_index >= 0:
+            min_value = 0.0
+            max_value = 1.0
+            margin = 0.01  # 1%マージン
+            
+            # 前のポイント制約
+            if current_index > 0:
+                min_value = sorted_points[current_index - 1].value + margin
+            
+            # 次のポイント制約
+            if current_index < len(sorted_points) - 1:
+                max_value = sorted_points[current_index + 1].value - margin
+            
+            # target_valueを制約範囲内に収める
+            target_value = max(min_value, min(max_value, target_value))
+        
+        # 制約されたvalueから最終位置を再計算
+        if self.parent_ellipse.orientation == "horizontal":
+            display_y = pos.y() + rect.height() * target_value
+        else:
+            display_x = pos.x() + rect.width() * target_value
+        
+        # ポイントマーカーの位置を更新
+        marker_size = 32
+        self.setPos(display_x - marker_size/2, display_y - marker_size/2)
+        
+        # 対応するテキストアイテムも更新
+        try:
+            text_index = self.parent_ellipse.circumference_items.index(self) + 1
+            if text_index < len(self.parent_ellipse.circumference_items):
+                text_item = self.parent_ellipse.circumference_items[text_index]
+                text_offset = 30
+                if self.parent_ellipse.orientation == "horizontal":
+                    text_x = display_x + (text_offset if display_x < pos.x() + rect.width()/2 else -text_offset)
+                    text_y = display_y - 15
                 else:
-                    # 通常の場合
-                    normalized_angle = max(min_angle, min(max_angle, normalized_angle))
-            
-            # 制約された角度を使用
-            final_angle = normalized_angle
-            
-            # 円周上の座標を計算（制約された角度を使用）
-            new_x = center_x + radius * math.cos(final_angle)
-            new_y = center_y + radius * math.sin(final_angle)
-            
-            # このアイテムの位置を更新
-            marker_size = 32
-            self.setPos(new_x - marker_size/2, new_y - marker_size/2)
-            
-            # 対応するテキストアイテムも更新
-            try:
-                text_index = self.parent_ellipse.circumference_items.index(self) + 1
-                if text_index < len(self.parent_ellipse.circumference_items):
-                    text_item = self.parent_ellipse.circumference_items[text_index]
-                    text_offset = 30
-                    text_x = center_x + (radius + text_offset) * math.cos(final_angle)
-                    text_y = center_y + (radius + text_offset) * math.sin(final_angle)
-                    text_item.setPos(text_x - 15, text_y - 15)
-            except (ValueError, IndexError):
-                pass
-            
-            # 元座標系での位置を更新
-            scale = self.parent_ellipse.scene_scale
-            self.point_data.position.x = new_x / scale
-            self.point_data.position.y = new_y / scale
-            
-            event.accept()
+                    text_x = display_x - 15
+                    text_y = display_y + (text_offset if display_y < pos.y() + rect.height()/2 else -text_offset)
+                text_item.setPos(text_x, text_y)
+        except (ValueError, IndexError):
+            pass
+        
+        # 元座標系での位置を更新
+        scale = self.parent_ellipse.scene_scale
+        self.point_data.position.x = display_x / scale
+        self.point_data.position.y = display_y / scale
+        
+        event.accept()
         
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1525,7 +1620,7 @@ class BarShapeItem(ResizableGraphicsItem):
     
     def __init__(self, x: float, y: float, width: float, height: float,
                  scene_scale: float = 1.0, category: ShapeCategory = ShapeCategory.METER,
-                 is_original_coords: bool = False, orientation: str = "horizontal"):
+                 is_original_coords: bool = False, circumference_points: List[CircumferencePoint] = None):
         # 実寸ベース + ウィンドウフィットシステム
         if is_original_coords:
             display_x = x * scene_scale
@@ -1540,46 +1635,204 @@ class BarShapeItem(ResizableGraphicsItem):
             display_height = height
             super().__init__(x / scene_scale, y / scene_scale, width / scene_scale, height / scene_scale, scene_scale, category)
         
-        self.orientation = orientation  # "horizontal" or "vertical"
+        # アスペクト比によるorientation自動判定
+        aspect_ratio = display_width / display_height if display_height > 0 else 1.0
+        self.orientation = "horizontal" if aspect_ratio > 1.0 else "vertical"
         
-        # パスでバーグラフを作成
-        self.path_item = QGraphicsPathItem()
-        self.path_item.setPos(display_x, display_y)
-        # 図形自体は選択・移動禁止（制御点のみ有効）
-        self.path_item.setFlag(QGraphicsItem.ItemIsMovable, False)
-        self.path_item.setFlag(QGraphicsItem.ItemIsSelectable, False)
-        self.path_item.setZValue(100)
+        # 矩形アイテムを作成（基本形状）
+        self.rect_item = QGraphicsRectItem(0, 0, display_width, display_height)
+        self.rect_item.setPos(display_x, display_y)
+        self.rect_item.setFlag(QGraphicsItem.ItemIsMovable, False)
+        self.rect_item.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        self.rect_item.setZValue(100)
+        
+        # 分割線アイテムを作成
+        self.divider_line = QGraphicsLineItem()
+        self.divider_line.setPos(display_x, display_y)
+        self.divider_line.setFlag(QGraphicsItem.ItemIsMovable, False)
+        self.divider_line.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        self.divider_line.setZValue(101)  # 矩形より前面
+        
         self.shape_type = ShapeType.BAR
         
-        # バーグラフのパスを作成
-        self.create_bar_path(display_width, display_height)
+        # circumferenceポイントデータを保存
+        self.circumference_points = circumference_points or []
+        self.circumference_items = []  # 表示用のグラフィックアイテム
+        self.circumference_dragging = False  # ドラッグ中フラグ
+        
+        # バー形状を作成（矩形 + 分割線）
+        self.create_bar_shape(display_width, display_height)
         self.update_color()
+        
+        # circumferenceポイントを表示
+        self.update_circumference_display()
         
         # 重心制御点とパーツ名を作成
         self.create_center_control_point()
         self.create_name_text()
         
-    def create_bar_path(self, width: float, height: float):
-        """バーグラフのパスを作成"""
-        path = QPainterPath()
+    def create_bar_shape(self, width: float, height: float):
+        """バー形状を作成（矩形 + 分割線）"""
+        from PySide6.QtCore import QLineF
         
+        # 矩形のサイズを設定
+        self.rect_item.setRect(0, 0, width, height)
+        
+        # アスペクト比を再判定（リサイズ時にも対応）
+        aspect_ratio = width / height if height > 0 else 1.0
+        self.orientation = "horizontal" if aspect_ratio > 1.0 else "vertical"
+        
+        # 分割線を設定
         if self.orientation == "horizontal":
-            # 水平バー：外框 + 中央のバー
-            path.addRect(0, 0, width, height)  # 外框
-            bar_height = height * 0.3
-            bar_y = (height - bar_height) / 2
-            path.addRect(5, bar_y, width - 10, bar_height)  # 中央バー
+            # 横長：縦に二分する線（中央を縦に通る）
+            line = QLineF(width / 2, 0, width / 2, height)
         else:
-            # 垂直バー：外框 + 中央のバー
-            path.addRect(0, 0, width, height)  # 外框
-            bar_width = width * 0.3
-            bar_x = (width - bar_width) / 2
-            path.addRect(bar_x, 5, bar_width, height - 10)  # 中央バー
+            # 縦長：横に二分する線（中央を横に通る）
+            line = QLineF(0, height / 2, width, height / 2)
         
-        self.path_item.setPath(path)
+        self.divider_line.setLine(line)
         
-    def get_item(self) -> QGraphicsPathItem:
-        return self.path_item
+        # 分割線のペンを設定
+        pen = QPen(QColor(0, 0, 0), 2)  # 黒色、2px幅
+        self.divider_line.setPen(pen)
+        
+    def get_item(self) -> QGraphicsRectItem:
+        return self.rect_item
+    
+    def update_color(self):
+        """選択状態に応じて色を更新"""
+        if self.is_selected:
+            # 選択時の色（ピンク）
+            brush = QBrush(QColor(255, 192, 203, 128))  # 半透明ピンク
+            pen = QPen(QColor(255, 0, 255), 3)  # マゼンタの枠線
+        else:
+            # 非選択時の色（薄い青）
+            brush = QBrush(QColor(173, 216, 230, 100))  # 半透明ライトブルー
+            pen = QPen(QColor(0, 0, 255), 2)  # 青の枠線
+        
+        self.rect_item.setBrush(brush)
+        self.rect_item.setPen(pen)
+        
+        # 分割線の色も更新
+        divider_pen = QPen(QColor(0, 0, 0), 2)  # 常に黒色
+        self.divider_line.setPen(divider_pen)
+    
+    def update_shape_on_resize(self):
+        """リサイズ時に形状を更新"""
+        rect = self.rect_item.boundingRect()
+        self.create_bar_shape(rect.width(), rect.height())
+    
+    def update_circumference_display(self):
+        """circumferenceポイントを分割線上に表示（選択時のみ）"""
+        # ドラッグ中は更新しない
+        if hasattr(self, 'circumference_dragging') and self.circumference_dragging:
+            return
+        
+        # 中心制御点がドラッグ中かチェック
+        if hasattr(self, 'center_control_point_handler'):
+            if hasattr(self.center_control_point_handler, 'is_dragging') and self.center_control_point_handler.is_dragging:
+                return
+        
+        # 既存の表示を削除
+        for item in self.circumference_items:
+            if item.scene():
+                item.scene().removeItem(item)
+        self.circumference_items.clear()
+        
+        if not self.rect_item.scene():
+            return
+        
+        # 選択されていない場合は表示しない
+        if not self.is_selected:
+            return
+        
+        # 矩形の情報を取得
+        rect = self.rect_item.boundingRect()
+        pos = self.rect_item.pos()
+        
+        # 分割線の情報を取得
+        line = self.divider_line.line()
+        
+        import math
+        
+        # circumferenceポイントをvalue順にソート
+        sorted_points = sorted(self.circumference_points, key=lambda p: p.value)
+        
+        # 各circumferenceポイントを分割線上に配置
+        for i, point in enumerate(sorted_points):
+            # vehicle.jsonのposition座標がある場合、それを優先的に使用（初期化時）
+            if hasattr(point, 'position') and point.position and not hasattr(point, '_bar_calculated_position'):
+                # 初期設定時：vehicle.jsonの座標をそのまま使用してスケーリング
+                display_x = point.position.x * self.scene_scale
+                display_y = point.position.y * self.scene_scale
+                point._bar_calculated_position = True  # 計算済みフラグ
+            else:
+                # valueに基づいて分割線上の位置を計算
+                if self.orientation == "horizontal":
+                    # 横長：縦分割線上にポイントを配置
+                    display_x = pos.x() + rect.width() / 2  # 分割線のx座標
+                    display_y = pos.y() + rect.height() * point.value  # value=0で上端、value=1で下端
+                else:
+                    # 縦長：横分割線上にポイントを配置
+                    display_x = pos.x() + rect.width() * point.value  # value=0で左端、value=1で右端
+                    display_y = pos.y() + rect.height() / 2  # 分割線のy座標
+            
+            if DEBUG_MODE:
+                print(f"[DEBUG] Bar Point {i}: value={point.value:.3f}, pos=({display_x:.2f}, {display_y:.2f})")
+            
+            # ポイントマーカー（大きな円）
+            marker_size = 32
+            point_marker = CircumferencePointItem(
+                display_x - marker_size/2,
+                display_y - marker_size/2,
+                marker_size,
+                marker_size,
+                self,
+                point,
+                i
+            )
+            point_marker.setBrush(QBrush(QColor(255, 128, 0)))  # オレンジ色
+            point_marker.setPen(QPen(QColor(0, 0, 0), 2))
+            point_marker.setZValue(1500)  # ハンドルより前面
+            point_marker.setFlag(QGraphicsItem.ItemIsMovable, True)
+            point_marker.setAcceptHoverEvents(True)
+            
+            # 値を表示するテキスト（大きく）
+            from PySide6.QtWidgets import QGraphicsTextItem
+            from PySide6.QtGui import QFont
+            value_text = QGraphicsTextItem(f"{point.value:.2f}")
+            
+            # テキストの位置を分割線の外側に配置
+            text_offset = 30
+            if self.orientation == "horizontal":
+                # 横長：テキストを右に配置
+                text_x = display_x + text_offset
+                text_y = display_y - 15
+            else:
+                # 縦長：テキストを下に配置
+                text_x = display_x - 15
+                text_y = display_y + text_offset
+            
+            value_text.setPos(text_x, text_y)
+            font = QFont("Arial", 16, QFont.Bold)
+            value_text.setFont(font)
+            value_text.setDefaultTextColor(QColor(255, 128, 0))
+            value_text.setZValue(1501)
+            
+            # シーンに追加
+            self.rect_item.scene().addItem(point_marker)
+            self.rect_item.scene().addItem(value_text)
+            
+            self.circumference_items.append(point_marker)
+            self.circumference_items.append(value_text)
+    
+    def set_visible(self, visible: bool):
+        """表示状態を設定"""
+        super().set_visible(visible)
+        if hasattr(self, 'rect_item'):
+            self.rect_item.setVisible(visible)
+        if hasattr(self, 'divider_line'):
+            self.divider_line.setVisible(visible)
 
 
 class ImageCanvas(QGraphicsView):
@@ -1690,6 +1943,10 @@ class ImageCanvas(QGraphicsView):
                 self.temp_item = QGraphicsEllipseItem(self.start_pos.x(),
                                                       self.start_pos.y(), 0, 0)
                 self.temp_item.setPen(QPen(QColor(0, 0, 255), 2))
+            elif self.drawing_mode == "bar":
+                self.temp_item = QGraphicsRectItem(self.start_pos.x(),
+                                                   self.start_pos.y(), 0, 0)
+                self.temp_item.setPen(QPen(QColor(0, 255, 0), 2))  # 緑色でbar
                 
             if self.temp_item:
                 self.scene.addItem(self.temp_item)
@@ -1811,11 +2068,20 @@ class ImageCanvas(QGraphicsView):
                     shape = ResizableEllipseItem(rect.x(), rect.y(),
                                                 rect.width(), rect.height(),
                                                 1.0, ShapeCategory.CUSTOM, False)
+                elif self.drawing_mode == "bar":
+                    shape = BarShapeItem(rect.x(), rect.y(),
+                                        rect.width(), rect.height(),
+                                        1.0, ShapeCategory.METER, False)
                 else:
                     shape = None
                     
                 if shape:
-                    self.scene.addItem(shape.get_item())
+                    if isinstance(shape, BarShapeItem):
+                        # BarShapeItemの場合は両方のアイテムを追加
+                        self.scene.addItem(shape.rect_item)
+                        self.scene.addItem(shape.divider_line)
+                    else:
+                        self.scene.addItem(shape.get_item())
                     self.shapes.append(shape)
                     # 原寸表示では追加の位置更新は不要
                     
@@ -1898,6 +2164,9 @@ class VehicleMonitorEditor(QMainWindow):
         
         circle_action = toolbar.addAction("円を描画")
         circle_action.triggered.connect(lambda: self.canvas.set_drawing_mode("circle"))
+        
+        bar_action = toolbar.addAction("バーを描画")
+        bar_action.triggered.connect(lambda: self.canvas.set_drawing_mode("bar"))
         
         select_action = toolbar.addAction("選択モード")
         select_action.triggered.connect(lambda: self.canvas.set_drawing_mode(None))
@@ -2149,6 +2418,18 @@ class VehicleMonitorEditor(QMainWindow):
         except Exception as e:
             self.statusBar().showMessage(f"Vehicle読み込みエラー: {str(e)}")
     
+    def add_shape_to_canvas(self, shape):
+        """図形をキャンバスに追加（BarShapeItemの場合は複数アイテムに対応）"""
+        if isinstance(shape, BarShapeItem):
+            # BarShapeItemの場合は両方のアイテムを追加
+            self.canvas.scene.addItem(shape.rect_item)
+            self.canvas.scene.addItem(shape.divider_line)
+        else:
+            # 通常の図形の場合
+            self.canvas.scene.addItem(shape.get_item())
+        
+        self.canvas.shapes.append(shape)
+    
     def display_vehicle_shapes(self):
         """vehicle.jsonの図形を画面に表示"""
         if not self.vehicle_data:
@@ -2170,23 +2451,29 @@ class VehicleMonitorEditor(QMainWindow):
             # 計算したスケールで作成
             shape = ResizableRectItem(x, y, w, h, current_scale, ShapeCategory.ICON, True)
             shape.name = icon.name
-            self.canvas.scene.addItem(shape.get_item())
-            self.canvas.shapes.append(shape)
+            self.add_shape_to_canvas(shape)
         
-        # メーター（円形）を追加
+        # メーター（円形・バー）を追加
         for meter in self.vehicle_data.meter:
             x = meter.center.x - meter.radius
             y = meter.center.y - meter.radius
             w = meter.radius * 2
             h = meter.radius * 2
             
-            # 計算したスケールで作成（circumferenceポイントも渡す）
-            shape = ResizableEllipseItem(x, y, w, h, current_scale, ShapeCategory.METER, True, meter.circumference)
+            # shape種別に応じて作成
+            if meter.shape == "bar":
+                # バー形状の場合（circumferenceポイントも渡す）
+                shape = BarShapeItem(x, y, w, h, current_scale, ShapeCategory.METER, True, meter.circumference)
+            else:
+                # 円形の場合（circumferenceポイントも渡す）
+                shape = ResizableEllipseItem(x, y, w, h, current_scale, ShapeCategory.METER, True, meter.circumference)
+                
             shape.name = meter.name
-            self.canvas.scene.addItem(shape.get_item())
-            self.canvas.shapes.append(shape)
-            # circumferenceポイントの表示を更新
-            shape.update_circumference_display()
+            self.add_shape_to_canvas(shape)
+            
+            # circumferenceポイントの表示を更新（円形・バー両方）
+            if hasattr(shape, 'update_circumference_display'):
+                shape.update_circumference_display()
         
         # OCR（矩形）を追加
         for ocr in self.vehicle_data.ocr:
@@ -2198,8 +2485,7 @@ class VehicleMonitorEditor(QMainWindow):
             # 計算したスケールで作成
             shape = ResizableRectItem(x, y, w, h, current_scale, ShapeCategory.OCR, True)
             shape.name = ocr.name
-            self.canvas.scene.addItem(shape.get_item())
-            self.canvas.shapes.append(shape)
+            self.add_shape_to_canvas(shape)
         
         # 原寸表示（スケール調整なし）
         if self.canvas.original_pixmap:
