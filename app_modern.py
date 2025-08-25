@@ -8,9 +8,13 @@ import sys
 from typing import Optional
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QSizePolicy,
-                               QGraphicsView, QGraphicsScene, QPushButton, QHBoxLayout, QGroupBox)
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QPixmap, QPainter, QColor, QFont
+                               QGraphicsView, QGraphicsScene, QPushButton, QHBoxLayout, QGroupBox,
+                               QCheckBox, QTreeWidget, QTreeWidgetItem, QGraphicsRectItem, QGraphicsEllipseItem,
+                               QGraphicsTextItem)
+from PySide6.QtCore import QTimer, Qt, QRectF, QPointF
+from PySide6.QtGui import QPixmap, QPainter, QColor, QFont, QPen, QBrush
+from typing import List, Dict, Tuple
+from enum import Enum
 
 # データモデル
 from models.app_state import AppState
@@ -315,9 +319,9 @@ class EditModernSidebar(ModernSidebar):
         """)
         step2_layout = QVBoxLayout()
         
-        # 編集項目説明
-        edit_info_label = QLabel("⏳ 車を選択すると編集できます")
-        edit_info_label.setStyleSheet(f"""
+        # パーツ選択のための初期状態ラベル
+        self.parts_info_label = QLabel("⏳ 車を選択すると編集できます")
+        self.parts_info_label.setStyleSheet(f"""
             QLabel {{
                 color: {DesignTokens.COLORS['dark']['text_secondary']};
                 font-size: 13px;
@@ -327,27 +331,77 @@ class EditModernSidebar(ModernSidebar):
                 text-align: center;
             }}
         """)
-        step2_layout.addWidget(edit_info_label)
+        step2_layout.addWidget(self.parts_info_label)
         
-        # 将来の編集ボタン（現在は無効化）
-        edit_buttons_layout = QVBoxLayout()
+        # パーツ表示カテゴリ別チェックボックス（初期は非表示）
+        self.category_group = QGroupBox("表示カテゴリ")
+        self.category_group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {DesignTokens.COLORS['dark']['text_primary']};
+                border: 1px solid {DesignTokens.COLORS['dark']['border']};
+                border-radius: 6px;
+                margin-top: 8px;
+                font-size: 12px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+            }}
+        """)
+        self.category_group.hide()  # 初期は非表示
         
-        meter_btn = QPushButton("🌡️ メーターの位置を決める")
-        meter_btn.setEnabled(False)
-        meter_btn.setStyleSheet(self._get_disabled_button_style())
-        edit_buttons_layout.addWidget(meter_btn)
+        category_layout = QVBoxLayout()
         
-        icon_btn = QPushButton("⚠️ アイコンの位置を決める")
-        icon_btn.setEnabled(False) 
-        icon_btn.setStyleSheet(self._get_disabled_button_style())
-        edit_buttons_layout.addWidget(icon_btn)
+        self.icon_checkbox = QCheckBox("🔴 Icon (矩形)")
+        self.icon_checkbox.setChecked(True)
+        self.icon_checkbox.stateChanged.connect(lambda: self._toggle_category_visibility('icon'))
         
-        text_btn = QPushButton("📝 文字の位置を決める")
-        text_btn.setEnabled(False)
-        text_btn.setStyleSheet(self._get_disabled_button_style())
-        edit_buttons_layout.addWidget(text_btn)
+        self.meter_checkbox = QCheckBox("🔵 Meter (円形)")
+        self.meter_checkbox.setChecked(True)
+        self.meter_checkbox.stateChanged.connect(lambda: self._toggle_category_visibility('meter'))
         
-        step2_layout.addLayout(edit_buttons_layout)
+        self.ocr_checkbox = QCheckBox("🟠 OCR (矩形)")
+        self.ocr_checkbox.setChecked(True)
+        self.ocr_checkbox.stateChanged.connect(lambda: self._toggle_category_visibility('ocr'))
+        
+        category_layout.addWidget(self.icon_checkbox)
+        category_layout.addWidget(self.meter_checkbox)
+        category_layout.addWidget(self.ocr_checkbox)
+        self.category_group.setLayout(category_layout)
+        
+        step2_layout.addWidget(self.category_group)
+        
+        # パーツリストツリー（初期は非表示）
+        self.parts_tree_label = QLabel("パーツリスト:")
+        self.parts_tree_label.setStyleSheet(f"""
+            QLabel {{
+                color: {DesignTokens.COLORS['dark']['text_primary']};
+                font-size: 12px;
+                font-weight: 600;
+                margin-top: 8px;
+            }}
+        """)
+        self.parts_tree_label.hide()  # 初期は非表示
+        
+        from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+        self.parts_tree = QTreeWidget()
+        self.parts_tree.setHeaderLabels(["名前", "カテゴリ", "タイプ"])
+        self.parts_tree.itemClicked.connect(self._on_tree_item_clicked)
+        self.parts_tree.setMaximumHeight(200)
+        self.parts_tree.setStyleSheet(f"""
+            QTreeWidget {{
+                color: {DesignTokens.COLORS['dark']['text_primary']};
+                background-color: {DesignTokens.COLORS['dark']['surface_1']};
+                border: 1px solid {DesignTokens.COLORS['dark']['border']};
+                border-radius: 4px;
+                selection-background-color: {DesignTokens.COLORS['dark']['primary']};
+            }}
+        """)
+        self.parts_tree.hide()  # 初期は非表示
+        
+        step2_layout.addWidget(self.parts_tree_label)
+        step2_layout.addWidget(self.parts_tree)
         step2_group.setLayout(step2_layout)
         self.content_layout.addWidget(step2_group)
         
@@ -463,6 +517,7 @@ class EditModernSidebar(ModernSidebar):
         """vehicle.jsonファイルを読み込み"""
         try:
             import json
+            print(f"=== VEHICLE FILE LOADING START ===")
             print(f"Loading vehicle file: {file_path}")
             
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -470,6 +525,12 @@ class EditModernSidebar(ModernSidebar):
             
             # ファイルパスを記憶
             self.current_vehicle_file_path = file_path
+            
+            # デバッグ: データ構造を確認
+            print(f"Vehicle data loaded: {self.vehicle_data.keys()}")
+            print(f"Icons: {len(self.vehicle_data.get('icon', []))}")
+            print(f"Meters: {len(self.vehicle_data.get('meter', []))}")
+            print(f"OCRs: {len(self.vehicle_data.get('ocr', []))}")
             
             # 車両名をUIに反映（ユーザーフレンドリー表示）
             vehicle_name = self.vehicle_data.get("name", "Unknown")
@@ -488,14 +549,51 @@ class EditModernSidebar(ModernSidebar):
             
             print(f"Vehicle loaded successfully: {vehicle_name}")
             
+            # MainViewにvehicle.jsonデータを渡す
+            print("=== SENDING DATA TO MAIN VIEW ===")
+            self._send_vehicle_data_to_main_view()
+            
             # RestAPIで画像を取得
             self._fetch_full_image()
+            
+            print(f"=== VEHICLE FILE LOADING COMPLETE ===")
             
             # 将来的にはここでステップ2のボタンを有効化する予定
             
         except Exception as e:
             print(f"Error loading vehicle file: {e}")
             self.vehicle_info_label.setText("車両: 読み込みエラー")
+    
+    def _send_vehicle_data_to_main_view(self):
+        """vehicle.jsonデータをMainViewに送信"""
+        if not self.vehicle_data:
+            print("No vehicle data to send")
+            return
+            
+        try:
+            # 親のVehicleMonitorApplicationインスタンスを取得
+            app_instance = self.parent()
+            while app_instance and not hasattr(app_instance, 'mode_components'):
+                app_instance = app_instance.parent()
+            
+            if app_instance and hasattr(app_instance, 'mode_components'):
+                # EDITモードのMainViewを取得
+                edit_components = app_instance.mode_components.get(AppMode.EDIT, {})
+                main_view = edit_components.get('main_view')
+                
+                if main_view and hasattr(main_view, 'load_vehicle_json'):
+                    print("Sending vehicle data to EditModernMainView")
+                    main_view.load_vehicle_json(self.vehicle_data)
+                    
+                    # サイドバーのパーツリストも更新
+                    self._update_sidebar_parts_list()
+                else:
+                    print("EditModernMainView not found or load_vehicle_json method missing")
+            else:
+                print("VehicleMonitorApplication instance not found")
+                
+        except Exception as e:
+            print(f"Error sending vehicle data to main view: {e}")
     
     def _on_load_vehicle_clicked(self):
         """Load Vehicleボタンクリック時の処理"""
@@ -559,6 +657,146 @@ class EditModernSidebar(ModernSidebar):
     def set_main_application(self, main_app):
         """メインアプリケーションの参照を設定"""
         self.app_state.main_application = main_app
+    
+    def _update_sidebar_parts_list(self):
+        """サイドバーのパーツリストを更新"""
+        if not self.vehicle_data:
+            return
+            
+        # パーツ情報ラベルを更新
+        vehicle_name = self.vehicle_data.get("name", "Unknown")
+        icon_count = len(self.vehicle_data.get('icon', []))
+        meter_count = len(self.vehicle_data.get('meter', []))
+        ocr_count = len(self.vehicle_data.get('ocr', []))
+        
+        self.parts_info_label.setText(f"✅ {vehicle_name}: {icon_count + meter_count + ocr_count}個のパーツ")
+        
+        # パーツ選択要素を表示
+        self.category_group.show()
+        self.parts_tree_label.show()
+        self.parts_tree.show()
+        
+        # パーツリストツリーを更新
+        from PySide6.QtWidgets import QTreeWidgetItem
+        from PySide6.QtCore import Qt
+        
+        self.parts_tree.clear()
+        
+        # カテゴリ別にグループ化
+        icon_parent = QTreeWidgetItem(["Icon", "", ""])
+        meter_parent = QTreeWidgetItem(["Meter", "", ""])
+        ocr_parent = QTreeWidgetItem(["OCR", "", ""])
+        
+        # Iconアイテムを追加
+        for i, icon in enumerate(self.vehicle_data.get('icon', [])):
+            item = QTreeWidgetItem([
+                icon.get('name', f'Icon {i+1}'),
+                'Icon',
+                icon.get('type', 'bool')
+            ])
+            item.setData(0, Qt.UserRole, {'category': 'icon', 'index': i, 'data': icon})
+            icon_parent.addChild(item)
+        
+        # Meterアイテムを追加
+        for i, meter in enumerate(self.vehicle_data.get('meter', [])):
+            item = QTreeWidgetItem([
+                meter.get('name', f'Meter {i+1}'),
+                'Meter',
+                meter.get('type', 'float')
+            ])
+            item.setData(0, Qt.UserRole, {'category': 'meter', 'index': i, 'data': meter})
+            meter_parent.addChild(item)
+        
+        # OCRアイテムを追加
+        for i, ocr in enumerate(self.vehicle_data.get('ocr', [])):
+            item = QTreeWidgetItem([
+                ocr.get('name', f'OCR {i+1}'),
+                'OCR',
+                ocr.get('type', 'int')
+            ])
+            item.setData(0, Qt.UserRole, {'category': 'ocr', 'index': i, 'data': ocr})
+            ocr_parent.addChild(item)
+        
+        # カテゴリをツリーに追加（子要素があるもののみ）
+        if icon_parent.childCount() > 0:
+            self.parts_tree.addTopLevelItem(icon_parent)
+            icon_parent.setExpanded(True)
+        
+        if meter_parent.childCount() > 0:
+            self.parts_tree.addTopLevelItem(meter_parent)
+            meter_parent.setExpanded(True)
+        
+        if ocr_parent.childCount() > 0:
+            self.parts_tree.addTopLevelItem(ocr_parent)
+            ocr_parent.setExpanded(True)
+            
+        print(f"Sidebar parts list updated: {icon_count} icons, {meter_count} meters, {ocr_count} ocrs")
+    
+    def _on_tree_item_clicked(self, item, column):
+        """ツリーアイテムクリック時の処理"""
+        try:
+            item_data = item.data(0, Qt.UserRole)
+            if not item_data:
+                print("No item data found")
+                return
+                
+            category = item_data.get('category')
+            index = item_data.get('index')
+            data = item_data.get('data')
+            
+            print(f"Tree item clicked: {category} #{index} - {data.get('name', 'Unknown')}")
+            
+            # メインビューに選択されたパーツをハイライトするよう通知
+            self._highlight_part_in_main_view(category, index)
+            
+        except Exception as e:
+            print(f"Error handling tree item click: {e}")
+    
+    def _highlight_part_in_main_view(self, category, index):
+        """メインビューで指定されたパーツをハイライト"""
+        try:
+            # 親のVehicleMonitorApplicationインスタンスを取得
+            app_instance = self.parent()
+            while app_instance and not hasattr(app_instance, 'mode_components'):
+                app_instance = app_instance.parent()
+            
+            if app_instance and hasattr(app_instance, 'mode_components'):
+                edit_components = app_instance.mode_components.get(AppMode.EDIT, {})
+                main_view = edit_components.get('main_view')
+                
+                if main_view and hasattr(main_view, '_highlight_part'):
+                    main_view._highlight_part(category, index)
+                else:
+                    print("MainView highlight method not found")
+            else:
+                print("VehicleMonitorApplication instance not found")
+                    
+        except Exception as e:
+            print(f"Error highlighting part in main view: {e}")
+    
+    def _toggle_category_visibility(self, category):
+        """カテゴリ表示の切り替え"""
+        try:
+            # 親のVehicleMonitorApplicationインスタンスを取得
+            app_instance = self.parent()
+            while app_instance and not hasattr(app_instance, 'mode_components'):
+                app_instance = app_instance.parent()
+            
+            if app_instance and hasattr(app_instance, 'mode_components'):
+                edit_components = app_instance.mode_components.get(AppMode.EDIT, {})
+                main_view = edit_components.get('main_view')
+                
+                if main_view and hasattr(main_view, '_toggle_category_visibility'):
+                    is_checked = getattr(self, f'{category}_checkbox').isChecked()
+                    main_view._toggle_category_visibility(category, is_checked)
+                    print(f"Category {category} visibility toggled: {is_checked}")
+                else:
+                    print("MainView toggle method not found")
+            else:
+                print("VehicleMonitorApplication instance not found")
+                    
+        except Exception as e:
+            print(f"Error toggling category visibility: {e}")
 
 
 class MonitorModernSidebar(ModernSidebar):
@@ -810,6 +1048,10 @@ class ModernEditImageCanvas(QGraphicsView):
         self._right_mouse_pressed = False
         self._last_pan_point = None
         
+        # 図形選択管理（main.py準拠）
+        self.selected_shape = None
+        self._vehicle_shapes: List[ResizableGraphicsItem] = []
+        
         # 原寸表示用ビュー設定
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -994,7 +1236,7 @@ class ModernEditImageCanvas(QGraphicsView):
             super().wheelEvent(event)
     
     def mousePressEvent(self, event):
-        """マウスボタンが押された時の処理"""
+        """マウスボタンが押された時の処理（main.py完全準拠）"""
         from PySide6.QtCore import Qt
         
         if event.button() == Qt.MouseButton.RightButton:
@@ -1003,8 +1245,22 @@ class ModernEditImageCanvas(QGraphicsView):
             self._last_pan_point = event.pos()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)  # 掴んでいる状態のカーソル
             event.accept()
+        elif event.button() == Qt.MouseButton.LeftButton:
+            # 左クリック処理 - 制御点選択システム（main.py準拠）
+            click_pos = self.mapToScene(event.position().toPoint())
+            
+            # 制御点選択を試行
+            if not self.select_nearest_control_point(click_pos):
+                # 制御点以外をクリックした場合 - 全ての選択を解除
+                if self.selected_shape:
+                    self.selected_shape.set_selected(False)
+                    self.selected_shape = None
+                    print("All selections cleared")
+            
+            # 標準のマウス処理も実行（重要）
+            super().mousePressEvent(event)
         else:
-            # 左クリックなど他のボタンは標準処理
+            # その他のボタンは標準処理
             super().mousePressEvent(event)
     
     def mouseMoveEvent(self, event):
@@ -1042,10 +1298,1171 @@ class ModernEditImageCanvas(QGraphicsView):
             # 左クリックなど他のボタンは標準処理
             super().mouseReleaseEvent(event)
     
+    def select_nearest_control_point(self, click_pos):
+        """クリック位置に最も近い制御点を選択（main.pyから完全移植）"""
+        import math
+        
+        min_distance = float('inf')
+        nearest_shape = None
+        
+        for shape in self._vehicle_shapes:
+            if shape.center_control_point and shape.visible:
+                # 制御点の中心位置を計算
+                control_rect = shape.center_control_point.rect()
+                control_pos = shape.center_control_point.pos()
+                center_x = control_pos.x() + control_rect.width() / 2
+                center_y = control_pos.y() + control_rect.height() / 2
+                
+                # クリック位置からの距離を計算
+                distance = math.sqrt((click_pos.x() - center_x)**2 + (click_pos.y() - center_y)**2)
+                
+                # 制御点の半径内にある場合のみ対象とする（選択可能範囲）
+                control_radius = max(control_rect.width(), control_rect.height()) / 2 + 10  # +10px余裕
+                
+                if distance <= control_radius and distance < min_distance:
+                    min_distance = distance
+                    nearest_shape = shape
+        
+        # 最も近いパーツがあれば選択
+        if nearest_shape:
+            # 既存の選択をクリア
+            if self.selected_shape and self.selected_shape != nearest_shape:
+                self.selected_shape.set_selected(False)
+            
+            # 新しいパーツを選択
+            self.selected_shape = nearest_shape
+            nearest_shape.set_selected(True)
+            
+            print(f"Selected shape: {nearest_shape.category.value} at distance {min_distance:.1f}px")
+            return True
+        
+        return False
+    
     def resizeEvent(self, event):
         """ウィンドウリサイズ時の処理"""
         super().resizeEvent(event)
         # 原寸表示モードではリサイズ時の自動調整を行わない
+
+
+# ===== 高度パーツ描画システム (main.pyから移植) =====
+
+class CenterControlPointHover:
+    """重心制御点のホバー効果ハンドラ（main.pyから完全移植）"""
+    
+    def __init__(self, control_point_item, parent_shape):
+        self.control_point_item = control_point_item
+        self.parent_shape = parent_shape
+        # サイズは動的に計算（移動時に追従するため）
+    
+    def get_current_sizes(self):
+        """現在の選択状態に応じたサイズを取得"""
+        original_size = 28 if self.parent_shape.is_selected else 24
+        hover_size = original_size + 6
+        return original_size, hover_size
+    
+    def hoverEnterEvent(self, event):
+        """ホバー開始時の処理（制御点を大きく、色変更）"""
+        # 動的サイズ取得
+        original_size, hover_size = self.get_current_sizes()
+        
+        # 現在の中心位置を保持してサイズのみ変更
+        current_rect = self.control_point_item.rect()
+        current_pos = self.control_point_item.pos()
+        
+        # 現在の中心位置を計算（絶対座標）
+        center_x = current_pos.x() + current_rect.center().x()
+        center_y = current_pos.y() + current_rect.center().y()
+        
+        # 新しい位置を計算（中心を保持）
+        new_pos_x = center_x - hover_size / 2
+        new_pos_y = center_y - hover_size / 2
+        
+        # 位置とサイズを更新
+        self.control_point_item.setPos(new_pos_x, new_pos_y)
+        self.control_point_item.setRect(0, 0, hover_size, hover_size)
+        
+        # 色を明るく（選択可能を示す）
+        if self.parent_shape.is_selected:
+            # 選択時: カテゴリ色をより明るく
+            hover_color = self.parent_shape.get_category_color().lighter(150)
+        else:
+            # 未選択時: カテゴリ色で表示
+            hover_color = self.parent_shape.get_category_color().lighter(120)
+        self.control_point_item.setBrush(QBrush(hover_color))
+        self.control_point_item.setPen(QPen(QColor(0, 0, 0), 3))
+        
+        # デフォルトのホバー処理
+        from PySide6.QtWidgets import QGraphicsEllipseItem
+        QGraphicsEllipseItem.hoverEnterEvent(self.control_point_item, event)
+    
+    def hoverLeaveEvent(self, event):
+        """ホバー終了時の処理（元のサイズ、色に戻す）"""
+        # 動的サイズ取得
+        original_size, hover_size = self.get_current_sizes()
+        
+        # 現在の中心位置を保持して元のサイズに戻す
+        current_rect = self.control_point_item.rect()
+        current_pos = self.control_point_item.pos()
+        
+        # 現在の中心位置を計算（絶対座標）
+        center_x = current_pos.x() + current_rect.center().x()
+        center_y = current_pos.y() + current_rect.center().y()
+        
+        # 元のサイズでの新しい位置を計算（中心を保持）
+        new_pos_x = center_x - original_size / 2
+        new_pos_y = center_y - original_size / 2
+        
+        # 位置とサイズを更新
+        self.control_point_item.setPos(new_pos_x, new_pos_y)
+        self.control_point_item.setRect(0, 0, original_size, original_size)
+        
+        # 色を元に戻す（選択状態に応じて）
+        if self.parent_shape.is_selected:
+            # 選択時: カテゴリ色
+            original_color = self.parent_shape.get_category_color()
+        else:
+            # 未選択時: 白色
+            original_color = QColor(255, 255, 255)
+        self.control_point_item.setBrush(QBrush(original_color))
+        self.control_point_item.setPen(QPen(QColor(0, 0, 0), 3))
+        
+        # デフォルトのホバー処理
+        from PySide6.QtWidgets import QGraphicsEllipseItem
+        QGraphicsEllipseItem.hoverLeaveEvent(self.control_point_item, event)
+
+
+class CenterControlPointHandler:
+    """重心制御点のマウスイベントハンドラー"""
+    
+    def __init__(self, control_point_item, parent_shape):
+        self.control_point_item = control_point_item
+        self.parent_shape = parent_shape
+        self.is_dragging = False
+        self.last_pos = None
+    
+    def mousePressEvent(self, event):
+        """制御点クリック時の処理 - main.py準拠"""
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton:
+            # 親図形を選択状態に設定
+            if hasattr(self.parent_shape, 'set_selected'):
+                # 他の全ての図形の選択を解除
+                self._clear_all_selections()
+                
+                # 現在の図形を選択
+                self.parent_shape.set_selected(True)
+                
+                # Canvas側のselected_shapeも更新
+                if hasattr(self.parent_shape, 'main_view') and self.parent_shape.main_view:
+                    main_view = self.parent_shape.main_view
+                    if hasattr(main_view, 'image_canvas'):
+                        main_view.image_canvas.selected_shape = self.parent_shape
+                        
+                print(f"Selected {self.parent_shape.category.value} via control point click")
+            
+            # ドラッグ開始準備
+            self.is_dragging = True
+            self.last_pos = event.scenePos()
+            
+            print("Center control point pressed - ready to drag")
+            
+            # main.py式のイベント処理: 制御点自体にイベントを渡す
+            from PySide6.QtWidgets import QGraphicsEllipseItem
+            QGraphicsEllipseItem.mousePressEvent(self.control_point_item, event)
+    
+    def mouseMoveEvent(self, event):
+        """制御点ドラッグ時の処理 - main.py完全準拠"""
+        if self.is_dragging and self.last_pos:
+            # 移動量を計算
+            current_pos = event.scenePos()
+            delta_x = current_pos.x() - self.last_pos.x()
+            delta_y = current_pos.y() - self.last_pos.y()
+            
+            # main.py準拠：先に制御点を移動
+            from PySide6.QtWidgets import QGraphicsEllipseItem
+            QGraphicsEllipseItem.mouseMoveEvent(self.control_point_item, event)
+            
+            # その後で関連アイテムを同期移動
+            self.parent_shape.move_associated_items(delta_x, delta_y)
+            
+            self.last_pos = current_pos
+            
+            print(f"Shape moved by ({delta_x:.1f}, {delta_y:.1f}) - main.py style")
+    
+    def mouseReleaseEvent(self, event):
+        """制御点ドラッグ終了時の処理"""
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton and self.is_dragging:
+            self.is_dragging = False
+            self.last_pos = None
+            
+            # 移動後の位置を元座標に反映
+            self.update_original_coordinates()
+            
+            # ハンドルを再作成して正しい位置に配置
+            self.parent_shape.create_handles()
+            
+            print("Center control point drag completed")
+            event.accept()
+        
+        # main.py式のイベント処理: 制御点自体にイベントを渡す
+        from PySide6.QtWidgets import QGraphicsEllipseItem
+        QGraphicsEllipseItem.mouseReleaseEvent(self.control_point_item, event)
+    
+    def update_original_coordinates(self):
+        """移動後の位置を元座標に反映"""
+        item = self.parent_shape.get_item()
+        current_pos = item.pos()
+        
+        # 現在のスケールで割って元座標を更新
+        scale = self.parent_shape.scene_scale
+        self.parent_shape.original_x = current_pos.x() / scale
+        self.parent_shape.original_y = current_pos.y() / scale
+        
+        print(f"Updated original coordinates: ({self.parent_shape.original_x:.1f}, {self.parent_shape.original_y:.1f})")
+    
+    def _clear_all_selections(self):
+        """全ての図形の選択を解除"""
+        # main_view経由でCanvasの_vehicle_shapesにアクセス
+        if hasattr(self.parent_shape, 'main_view') and self.parent_shape.main_view:
+            main_view = self.parent_shape.main_view
+            if hasattr(main_view, 'image_canvas') and hasattr(main_view.image_canvas, '_vehicle_shapes'):
+                for shape in main_view.image_canvas._vehicle_shapes:
+                    if hasattr(shape, 'set_selected'):
+                        shape.set_selected(False)
+                # Canvas側のselected_shapeも更新
+                main_view.image_canvas.selected_shape = None
+                print("Cleared all selections via Canvas reference")
+                return
+        
+        print("Warning: Could not clear selections - Canvas reference not found")
+
+
+class ResizeHandler:
+    """リサイズハンドルのドラッグハンドラー（main.pyから移植）"""
+    
+    def __init__(self, handle_item, parent_shape, handle_type):
+        self.handle_item = handle_item
+        self.parent_shape = parent_shape
+        self.handle_type = handle_type
+        self.is_dragging = False
+        self.start_pos = None
+        self.start_rect = None
+        self.start_item_pos = None
+    
+    def mousePressEvent(self, event):
+        """リサイズハンドルクリック時の処理"""
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = True
+            self.start_pos = event.scenePos()
+            
+            # 現在の図形の位置とサイズを記録
+            item = self.parent_shape.get_item()
+            self.start_rect = item.boundingRect()
+            self.start_item_pos = item.pos()
+            
+            event.accept()
+    
+    def mouseMoveEvent(self, event):
+        """リサイズハンドルドラッグ時の処理"""
+        if self.is_dragging and self.start_pos:
+            current_pos = event.scenePos()
+            delta_x = current_pos.x() - self.start_pos.x()
+            delta_y = current_pos.y() - self.start_pos.y()
+            
+            # ハンドルタイプに応じてリサイズ処理
+            self.resize_shape(delta_x, delta_y)
+    
+    def mouseReleaseEvent(self, event):
+        """リサイズハンドルドラッグ終了時の処理"""
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton and self.is_dragging:
+            self.is_dragging = False
+            self.start_pos = None
+            
+            # リサイズ後の座標を元座標に反映
+            self.update_original_size()
+            
+            # ハンドルを再作成して正しい位置に配置
+            self.parent_shape.create_handles()
+            
+            # circumferenceポイントも更新
+            if hasattr(self.parent_shape, 'update_circumference_display'):
+                self.parent_shape.update_circumference_display()
+            
+            event.accept()
+    
+    def resize_shape(self, delta_x: float, delta_y: float):
+        """ハンドルタイプに応じた図形リサイズ"""
+        item = self.parent_shape.get_item()
+        
+        # 円形の場合は正円を維持する特別処理
+        if hasattr(self.parent_shape, 'shape_type') and self.parent_shape.shape_type == ShapeType.CIRCLE:
+            self.resize_circle(delta_x, delta_y)
+            return
+        
+        # 新しい位置とサイズを計算（矩形・バー用）
+        new_x = self.start_item_pos.x()
+        new_y = self.start_item_pos.y()
+        new_width = self.start_rect.width()
+        new_height = self.start_rect.height()
+        
+        # ハンドルタイプ別のリサイズロジック
+        if self.handle_type == "top_left":
+            new_x += delta_x
+            new_y += delta_y
+            new_width -= delta_x
+            new_height -= delta_y
+        elif self.handle_type == "top_center":
+            new_y += delta_y
+            new_height -= delta_y
+        elif self.handle_type == "top_right":
+            new_y += delta_y
+            new_width += delta_x
+            new_height -= delta_y
+        elif self.handle_type == "middle_right":
+            new_width += delta_x
+        elif self.handle_type == "bottom_right":
+            new_width += delta_x
+            new_height += delta_y
+        elif self.handle_type == "bottom_center":
+            new_height += delta_y
+        elif self.handle_type == "bottom_left":
+            new_x += delta_x
+            new_width -= delta_x
+            new_height += delta_y
+        elif self.handle_type == "middle_left":
+            new_x += delta_x
+            new_width -= delta_x
+        
+        # 最小サイズ制限
+        min_size = 20
+        if new_width < min_size:
+            if self.handle_type in ["top_left", "bottom_left", "middle_left"]:
+                new_x = new_x + new_width - min_size
+            new_width = min_size
+        if new_height < min_size:
+            if self.handle_type in ["top_left", "top_center", "top_right"]:
+                new_y = new_y + new_height - min_size
+            new_height = min_size
+        
+        # 図形の位置とサイズを更新
+        item.setPos(new_x, new_y)
+        item.setRect(0, 0, new_width, new_height)
+        
+        # 制御点とパーツ名も更新
+        self.parent_shape.update_center_control_point()
+        self.parent_shape.update_name_display()
+    
+    def update_original_size(self):
+        """リサイズ後のサイズを元座標に反映"""
+        item = self.parent_shape.get_item()
+        rect = item.boundingRect()
+        pos = item.pos()
+        
+        # 現在のスケールで割って元座標を更新
+        scale = self.parent_shape.scene_scale
+        self.parent_shape.original_x = pos.x() / scale
+        self.parent_shape.original_y = pos.y() / scale
+        self.parent_shape.original_width = rect.width() / scale
+        self.parent_shape.original_height = rect.height() / scale
+        
+        print(f"Updated original size: ({self.parent_shape.original_width:.1f} x {self.parent_shape.original_height:.1f})")
+    
+    def resize_circle(self, delta_x: float, delta_y: float):
+        """円形専用リサイズ（正円を維持）"""
+        item = self.parent_shape.get_item()
+        
+        # 半径の変更量を計算（右ハンドルは+、左ハンドルは-）
+        if self.handle_type == "middle_right":
+            radius_delta = delta_x
+        elif self.handle_type == "middle_left":
+            radius_delta = -delta_x
+        else:
+            return
+        
+        # 新しい半径を計算（最小半径20px）
+        old_radius = self.start_rect.width() / 2
+        new_radius = max(20, old_radius + radius_delta)
+        
+        # 新しいサイズ（正円なのでwidth=height）
+        new_size = new_radius * 2
+        
+        # 中心を維持するため、新しい位置を計算
+        old_center_x = self.start_item_pos.x() + self.start_rect.width() / 2
+        old_center_y = self.start_item_pos.y() + self.start_rect.height() / 2
+        
+        new_x = old_center_x - new_radius
+        new_y = old_center_y - new_radius
+        
+        # 図形の位置とサイズを更新（正円）
+        item.setPos(new_x, new_y)
+        item.setRect(0, 0, new_size, new_size)
+        
+        # 制御点とパーツ名も更新
+        self.parent_shape.update_center_control_point()
+        self.parent_shape.update_name_display()
+        
+        print(f"Circle resized: radius={new_radius:.1f}px")
+
+
+class ShapeCategory(Enum):
+    """図形のカテゴリ"""
+    ICON = "icon"
+    METER = "meter"
+    OCR = "ocr"
+    CUSTOM = "custom"
+
+class ShapeType(Enum):
+    """図形の種類"""
+    BOX = "box"
+    CIRCLE = "circle"
+    BAR = "bar"
+
+class CircumferencePoint:
+    """円周上のポイント（meter用）"""
+    def __init__(self, position: Dict, value: float):
+        self.position = position  # {"x": float, "y": float}
+        self.value = value
+
+
+class ResizableGraphicsItem:
+    """リサイズ可能な図形の基底クラス（main.pyから完全移植）"""
+    
+    def __init__(self, x: float, y: float, width: float, height: float, 
+                 scene_scale: float = 1.0, category: ShapeCategory = ShapeCategory.CUSTOM, 
+                 main_view=None):
+        # 基本プロパティ
+        self.category = category
+        self.scene_scale = scene_scale
+        self.is_selected = False
+        self.visible = True
+        self.main_view = main_view  # ModernEditMainViewの参照
+        
+        # 元座標（vehicle.jsonでの座標）
+        self.original_x = x
+        self.original_y = y
+        self.original_width = width
+        self.original_height = height
+        
+        # ドラッグ・リサイズ用ハンドル
+        self.handles: List[QGraphicsRectItem] = []
+        self.handle_size = 16  # main.pyと同じサイズ
+        
+        # パーツ名表示用テキストアイテム
+        self.name_text_item = None
+        # 重心制御点
+        self.center_control_point = None
+        
+    def get_item(self):
+        """継承クラスで実装: 実際のQGraphicsItemを返す"""
+        raise NotImplementedError("Subclass must implement get_item method")
+    
+    def get_original_coords(self, scale: float = None) -> Tuple[float, float, float, float]:
+        """元画像の座標系での位置を返す"""
+        return (self.original_x, self.original_y, self.original_width, self.original_height)
+    
+    def update_position_for_scale(self, scale: float):
+        """スケール変更時の位置更新"""
+        self.scene_scale = scale
+        # 表示位置を実座標からスケールされた位置に更新
+        display_x = self.original_x * scale
+        display_y = self.original_y * scale
+        self.get_item().setPos(display_x, display_y)
+        
+        # パーツ名と制御点も更新
+        self.update_center_control_point()
+        self.update_name_display()
+    
+    def set_visible(self, visible: bool):
+        """図形の表示/非表示を切り替え"""
+        self.visible = visible
+        self.get_item().setVisible(visible)
+        
+        # 制御点も連動
+        if self.center_control_point:
+            self.center_control_point.setVisible(visible and self.is_selected)
+        
+        # パーツ名も連動
+        if self.name_text_item:
+            self.name_text_item.setVisible(visible)
+    
+    def set_selected(self, selected: bool):
+        """選択状態を設定"""
+        self.is_selected = selected
+        
+        # 選択状態に応じて描画を更新
+        self.update_display()
+        self.update_center_control_point()
+        
+        # リサイズハンドル表示制御
+        self.create_handles()
+    
+    def get_category_color(self) -> QColor:
+        """カテゴリ別の色を取得"""
+        category_colors = {
+            ShapeCategory.ICON: QColor(255, 100, 100),    # 赤系
+            ShapeCategory.METER: QColor(100, 255, 100),   # 緑系
+            ShapeCategory.OCR: QColor(100, 100, 255),     # 青系
+            ShapeCategory.CUSTOM: QColor(255, 255, 255),  # 白
+        }
+        return category_colors.get(self.category, QColor(255, 255, 255))
+    
+    def update_display(self):
+        """選択状態に応じて表示を更新"""
+        item = self.get_item()
+        if self.is_selected:
+            # 選択時: カテゴリ色で強調表示
+            pen_color = self.get_category_color()
+        else:
+            # 未選択時: 白色で表示
+            pen_color = QColor(255, 255, 255)
+        
+        # 統一方針：塗りなし、太線（線幅3px）
+        item.setBrush(QBrush(Qt.NoBrush))  # 塗りなし
+        item.setPen(QPen(pen_color, 3))     # 太線
+    
+    def create_handles(self):
+        """リサイズハンドルを作成（選択時のみ表示）"""
+        # 既存のハンドルを削除
+        for handle in self.handles:
+            if handle.scene():
+                handle.scene().removeItem(handle)
+        self.handles.clear()
+        
+        # 未選択時は変形ハンドルを表示しない
+        if not self.is_selected:
+            return
+        
+        # 継承クラスで具体的なハンドル作成を実装
+        self._create_specific_handles()
+    
+    def _create_specific_handles(self):
+        """継承クラスで実装: 図形固有のハンドル作成"""
+        pass
+    
+    def move_associated_items(self, delta_x: float, delta_y: float):
+        """関連アイテムを同期移動（main.py準拠の実装）"""
+        # ドラッグ競合防止のフラグ設定
+        if not hasattr(self, '_is_moving'):
+            self._is_moving = False
+        
+        if self._is_moving:
+            return  # 既に移動中の場合は処理をスキップ
+        
+        self._is_moving = True
+        
+        try:
+            # メイン図形を移動
+            item = self.get_item()
+            current_pos = item.pos()
+            new_pos = QPointF(current_pos.x() + delta_x, current_pos.y() + delta_y)
+            item.setPos(new_pos)
+            
+            # 制御点は既にQGraphicsEllipseItem.mouseMoveEvent()で移動済みなので除外
+            
+            # パーツ名を移動
+            if self.name_text_item:
+                name_pos = self.name_text_item.pos()
+                self.name_text_item.setPos(name_pos.x() + delta_x, name_pos.y() + delta_y)
+            
+            # リサイズハンドルを移動
+            for handle in self.handles:
+                handle_pos = handle.pos()
+                handle.setPos(handle_pos.x() + delta_x, handle_pos.y() + delta_y)
+            
+            # circumferenceポイントも移動（meter用）
+            if hasattr(self, 'circumference_items') and self.circumference_items:
+                for circ_item in self.circumference_items:
+                    circ_pos = circ_item.pos()
+                    circ_item.setPos(circ_pos.x() + delta_x, circ_pos.y() + delta_y)
+            
+            print(f"move_associated_items: moved associated items by ({delta_x:.1f}, {delta_y:.1f})")
+            
+        finally:
+            # フラグを必ずリセット
+            self._is_moving = False
+    
+    def update_center_control_point(self):
+        """重心位置制御点を更新"""
+        if not self.get_item().scene():
+            return
+            
+        # 既存の制御点を削除
+        if self.center_control_point:
+            self.get_item().scene().removeItem(self.center_control_point)
+            self.center_control_point = None
+        
+        # 常に重心位置に制御点を表示
+        item = self.get_item()
+        rect = item.boundingRect()
+        pos = item.pos()
+        
+        # 重心位置を計算
+        center_x = pos.x() + rect.center().x()
+        center_y = pos.y() + rect.center().y()
+        
+        # 制御点（選択状態に応じてサイズと色を変更）を作成
+        if self.is_selected:
+            # 選択時: より大きく、カテゴリ色で表示
+            control_point_size = 28
+            control_color = self.get_category_color()
+        else:
+            # 未選択時: 通常サイズ、白色で表示
+            control_point_size = 24
+            control_color = QColor(255, 255, 255)
+            
+        self.center_control_point = QGraphicsEllipseItem(
+            center_x - control_point_size/2,
+            center_y - control_point_size/2,
+            control_point_size,
+            control_point_size
+        )
+        
+        # 制御点のスタイル設定（main.py完全準拠）
+        self.center_control_point.setBrush(QBrush(control_color))
+        self.center_control_point.setPen(QPen(QColor(0, 0, 0), 3))  # main.pyと同じ太さ
+        
+        # ホバー時のスタイル変更用のフラグ設定（main.py準拠）
+        self.center_control_point.setAcceptHoverEvents(True)
+        
+        # ホバーイベントハンドラを設定（main.py準拠）
+        hover_handler = CenterControlPointHover(self.center_control_point, self)
+        self.center_control_point.hoverEnterEvent = hover_handler.hoverEnterEvent
+        self.center_control_point.hoverLeaveEvent = hover_handler.hoverLeaveEvent
+        
+        # 制御点を確実に最前面に設定（main.pyと同じ値）
+        self.center_control_point.setZValue(2000)
+        
+        # ドラッグ可能に設定（選択は無効化：Canvas側で処理）
+        from PySide6.QtWidgets import QGraphicsItem
+        self.center_control_point.setFlag(QGraphicsItem.ItemIsMovable, True)
+        self.center_control_point.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        
+        # シーンに追加
+        self.get_item().scene().addItem(self.center_control_point)
+        
+        # 制御点のドラッグイベントをカスタムクラスで置き換え（main.py準拠）
+        control_point_handler = CenterControlPointHandler(self.center_control_point, self)
+        # ドラッグ処理を有効化（選択は既にCanvas側で処理済み）
+        self.center_control_point.mousePressEvent = control_point_handler.mousePressEvent
+        self.center_control_point.mouseMoveEvent = control_point_handler.mouseMoveEvent
+        self.center_control_point.mouseReleaseEvent = control_point_handler.mouseReleaseEvent
+        
+        # 表示制御
+        self.center_control_point.setVisible(self.visible)
+    
+    def create_name_text(self, name: str):
+        """パーツ名テキストを作成"""
+        if not self.get_item().scene():
+            return
+            
+        # 既存のテキストを削除
+        if self.name_text_item:
+            self.get_item().scene().removeItem(self.name_text_item)
+            self.name_text_item = None
+        
+        # テキストアイテム作成
+        self.name_text_item = QGraphicsTextItem(name)
+        
+        # フォント設定
+        font = QFont("Arial", 12, QFont.Bold)
+        self.name_text_item.setFont(font)
+        self.name_text_item.setDefaultTextColor(QColor(255, 255, 0))  # 黄色
+        
+        # 位置設定（図形の上部）
+        self.update_name_display()
+        
+        # シーンに追加
+        self.get_item().scene().addItem(self.name_text_item)
+    
+    def update_name_display(self):
+        """パーツ名表示位置を更新"""
+        if not self.name_text_item:
+            return
+            
+        item = self.get_item()
+        rect = item.boundingRect()
+        pos = item.pos()
+        
+        # 図形の上部中央に配置
+        text_x = pos.x() + rect.center().x() - self.name_text_item.boundingRect().width() / 2
+        text_y = pos.y() - self.name_text_item.boundingRect().height() - 5
+        
+        self.name_text_item.setPos(text_x, text_y)
+
+
+class ResizableRectItem(ResizableGraphicsItem):
+    """リサイズ可能な矩形（icon/ocr用）"""
+    
+    def __init__(self, x: float, y: float, width: float, height: float,
+                 scene_scale: float = 1.0, category: ShapeCategory = ShapeCategory.CUSTOM,
+                 is_original_coords: bool = False, main_view=None):
+        super().__init__(x, y, width, height, scene_scale, category, main_view)
+        
+        self.shape_type = ShapeType.BOX
+        
+        # 座標変換
+        if is_original_coords:
+            display_x = x
+            display_y = y
+            display_width = width
+            display_height = height
+        else:
+            display_x = x * scene_scale
+            display_y = y * scene_scale
+            display_width = width * scene_scale
+            display_height = height * scene_scale
+        
+        # 矩形アイテム作成
+        self.rect_item = QGraphicsRectItem(0, 0, display_width, display_height)
+        self.rect_item.setPos(display_x, display_y)
+        
+        # 初期表示設定
+        self.update_display()
+    
+    def get_item(self) -> QGraphicsRectItem:
+        return self.rect_item
+    
+    def _create_specific_handles(self):
+        """矩形用8方向ハンドル作成"""
+        item = self.get_item()
+        rect = item.boundingRect()
+        pos = item.pos()
+        
+        # 8つのハンドル位置
+        handle_types = [
+            "top_left", "top_center", "top_right", "middle_right",
+            "bottom_right", "bottom_center", "bottom_left", "middle_left"
+        ]
+        
+        positions = [
+            (pos.x() + rect.left(), pos.y() + rect.top()),        # 左上
+            (pos.x() + rect.center().x(), pos.y() + rect.top()),  # 上中央
+            (pos.x() + rect.right(), pos.y() + rect.top()),       # 右上
+            (pos.x() + rect.right(), pos.y() + rect.center().y()),# 右中央
+            (pos.x() + rect.right(), pos.y() + rect.bottom()),    # 右下
+            (pos.x() + rect.center().x(), pos.y() + rect.bottom()),# 下中央
+            (pos.x() + rect.left(), pos.y() + rect.bottom()),     # 左下
+            (pos.x() + rect.left(), pos.y() + rect.center().y())  # 左中央
+        ]
+        
+        for i, (handle_type, (hx, hy)) in enumerate(zip(handle_types, positions)):
+            handle = QGraphicsRectItem(
+                hx - self.handle_size/2, 
+                hy - self.handle_size/2, 
+                self.handle_size, 
+                self.handle_size
+            )
+            handle.setBrush(QBrush(QColor(255, 255, 255)))  # 白色（main.pyと同じ）
+            handle.setPen(QPen(QColor(0, 0, 0), 1))       # 黒枠
+            handle.setZValue(1001)  # 制御点より前面
+            
+            # ドラッグ可能に設定
+            handle.setFlag(handle.GraphicsItemFlag.ItemIsMovable, True)
+            handle.setAcceptHoverEvents(True)
+            
+            # ハンドルタイプをデータとして保存
+            handle.setData(0, handle_type)
+            
+            # リサイズハンドラーを設定
+            resize_handler = ResizeHandler(handle, self, handle_type)
+            handle.mousePressEvent = resize_handler.mousePressEvent
+            handle.mouseMoveEvent = resize_handler.mouseMoveEvent
+            handle.mouseReleaseEvent = resize_handler.mouseReleaseEvent
+            
+            self.handles.append(handle)
+            self.get_item().scene().addItem(handle)
+
+
+class ResizableEllipseItem(ResizableGraphicsItem):
+    """リサイズ可能な円（meter用、circumferenceポイント付き）"""
+    
+    def __init__(self, x: float, y: float, width: float, height: float,
+                 scene_scale: float = 1.0, category: ShapeCategory = ShapeCategory.CUSTOM,
+                 is_original_coords: bool = False, circumference_points: List[CircumferencePoint] = None,
+                 main_view=None):
+        super().__init__(x, y, width, height, scene_scale, category, main_view)
+        
+        self.shape_type = ShapeType.CIRCLE
+        self.circumference_points = circumference_points or []
+        self.circumference_items = []  # 表示用アイテム
+        
+        # 座標変換
+        if is_original_coords:
+            display_x = x
+            display_y = y
+            display_width = width
+            display_height = height
+        else:
+            display_x = x * scene_scale
+            display_y = y * scene_scale
+            display_width = width * scene_scale
+            display_height = height * scene_scale
+        
+        # 円形アイテム作成
+        self.ellipse_item = QGraphicsEllipseItem(0, 0, display_width, display_height)
+        self.ellipse_item.setPos(display_x, display_y)
+        
+        # 初期表示設定
+        self.update_display()
+    
+    def get_item(self) -> QGraphicsEllipseItem:
+        return self.ellipse_item
+    
+    def update_circumference_display(self):
+        """circumferenceポイントの表示を更新（選択時のみ）"""
+        # 既存の表示を削除
+        for item in self.circumference_items:
+            if item.scene():
+                item.scene().removeItem(item)
+        self.circumference_items.clear()
+        
+        if not self.ellipse_item.scene():
+            return
+        
+        # 選択されていない場合は表示しない（デバッグ用に一時的にコメントアウト）
+        # if not self.is_selected:
+        #     return
+        
+        print(f"DEBUG EllipseItem: update_circumference_display called, is_selected={self.is_selected}, points={len(self.circumference_points)}")
+        
+        # 円の中心と半径を計算
+        rect = self.ellipse_item.boundingRect()
+        pos = self.ellipse_item.pos()
+        center_x = pos.x() + rect.width() / 2
+        center_y = pos.y() + rect.height() / 2
+        radius = rect.width() / 2  # 正円なので幅から半径を計算
+        
+        import math
+        
+        # circumferenceポイントをvalue順にソート
+        sorted_points = sorted(self.circumference_points, key=lambda p: p.value)
+        
+        print(f"Circle center: ({center_x:.2f}, {center_y:.2f}), radius: {radius:.2f}")
+        print(f"Circumference points: {len(sorted_points)}")
+        
+        # 各circumferenceポイントを現在の円の中心・半径に基づいて配置
+        for i, point in enumerate(sorted_points):
+            try:
+                # 元の位置から角度を計算
+                original_x = point.position.get('x', 0)
+                original_y = point.position.get('y', 0)
+                
+                # vehicle.jsonの元座標系での円の中心を計算
+                original_center_x = self.original_x + self.original_width / 2
+                original_center_y = self.original_y + self.original_height / 2
+                
+                # 元座標系での角度を計算
+                dx = original_x - original_center_x
+                dy = original_y - original_center_y
+                angle = math.atan2(dy, dx)
+                
+                # 現在の半径で円周上に配置
+                point_x = center_x + radius * math.cos(angle)
+                point_y = center_y + radius * math.sin(angle)
+                
+                # ポイントサイズ（valueによって変化）
+                if point.value == 0 or point.value == 1:
+                    # 開始点と終了点は大きく、赤色
+                    point_size = 16
+                    point_color = QColor(255, 100, 100)
+                else:
+                    # 中間点は通常サイズ、青色
+                    point_size = 12
+                    point_color = QColor(100, 150, 255)
+                
+                # circumferenceポイントアイテム作成
+                point_item = QGraphicsEllipseItem(
+                    point_x - point_size/2,
+                    point_y - point_size/2,
+                    point_size,
+                    point_size
+                )
+                
+                # スタイル設定
+                point_item.setBrush(QBrush(point_color))
+                point_item.setPen(QPen(QColor(255, 255, 255), 2))  # 白枠
+                point_item.setZValue(1002)  # ハンドルより前面
+                
+                # シーンに追加
+                self.ellipse_item.scene().addItem(point_item)
+                self.circumference_items.append(point_item)
+                
+                # valueテキストを表示
+                value_text = QGraphicsTextItem(f"{point.value:.2f}")
+                value_text.setDefaultTextColor(QColor(255, 255, 0))  # 黄色で見やすく
+                value_text.setFont(QFont("Arial", 14, QFont.Bold))   # 14pxに拡大
+                
+                # 背景色（黒い背景で見やすく）
+                bg_rect = QGraphicsRectItem(value_text.boundingRect(), value_text)
+                bg_rect.setBrush(QBrush(QColor(0, 0, 0, 180)))  # 半透明の黒
+                bg_rect.setPen(QPen(QColor(255, 255, 255, 100), 1))  # 薄い白枠
+                bg_rect.setZValue(-1)  # テキストより後ろ
+                
+                # テキスト位置（ポイントの近く）
+                text_rect = value_text.boundingRect()
+                value_text.setPos(
+                    point_x + point_size/2 + 5,
+                    point_y - text_rect.height()/2
+                )
+                value_text.setZValue(1003)  # 最前面
+                
+                # シーンに追加
+                self.ellipse_item.scene().addItem(value_text)
+                self.circumference_items.append(value_text)
+                
+                print(f"  Point {i}: value={point.value:.2f}, pos=({point_x:.1f}, {point_y:.1f})")
+                
+            except Exception as e:
+                print(f"Error displaying circumference point {i}: {e}")
+    
+    def set_selected(self, selected: bool):
+        """選択状態を設定（circumferenceポイント表示更新）"""
+        super().set_selected(selected)
+        # circumferenceポイント表示を更新
+        self.update_circumference_display()
+    
+    def _create_specific_handles(self):
+        """円形用2方向ハンドル作成（半径変更用）"""
+        item = self.get_item()
+        rect = item.boundingRect()
+        pos = item.pos()
+        
+        # 円形: 左右の2つのハンドルのみ（半径変更用）
+        positions = [
+            (pos.x() + rect.right(), pos.y() + rect.center().y()),  # 右中央
+            (pos.x() + rect.left(), pos.y() + rect.center().y()),   # 左中央
+        ]
+        handle_types = ["middle_right", "middle_left"]
+        
+        for i, (hx, hy) in enumerate(positions):
+            handle = QGraphicsRectItem(
+                hx - self.handle_size/2, 
+                hy - self.handle_size/2, 
+                self.handle_size, 
+                self.handle_size
+            )
+            handle.setBrush(QBrush(QColor(255, 255, 255)))  # 白色
+            handle.setPen(QPen(QColor(0, 0, 0), 1))       # 黒枠
+            handle.setZValue(1001)  # 制御点より前面
+            
+            # ドラッグ可能に設定
+            handle.setFlag(handle.GraphicsItemFlag.ItemIsMovable, True)
+            handle.setAcceptHoverEvents(True)
+            
+            # リサイズハンドラーを設定
+            resize_handler = ResizeHandler(handle, self, handle_types[i])
+            handle.mousePressEvent = resize_handler.mousePressEvent
+            handle.mouseMoveEvent = resize_handler.mouseMoveEvent
+            handle.mouseReleaseEvent = resize_handler.mouseReleaseEvent
+            
+            self.handles.append(handle)
+            self.get_item().scene().addItem(handle)
+
+
+class BarShapeItem(ResizableGraphicsItem):
+    """バーグラフタイプの図形（水平または垂直バー、meter用）"""
+    
+    def __init__(self, x: float, y: float, width: float, height: float,
+                 scene_scale: float = 1.0, category: ShapeCategory = ShapeCategory.METER,
+                 is_original_coords: bool = False, circumference_points: List[CircumferencePoint] = None,
+                 main_view=None):
+        super().__init__(x, y, width, height, scene_scale, category, main_view)
+        
+        self.shape_type = ShapeType.BAR
+        self.circumference_points = circumference_points or []
+        self.circumference_items = []  # 表示用アイテム
+        self.orientation = "horizontal"  # "horizontal" or "vertical"
+        
+        # 座標変換
+        if is_original_coords:
+            display_x = x
+            display_y = y
+            display_width = width
+            display_height = height
+        else:
+            display_x = x * scene_scale
+            display_y = y * scene_scale
+            display_width = width * scene_scale
+            display_height = height * scene_scale
+        
+        # 矩形ベースのバー作成
+        self.rect_item = QGraphicsRectItem(0, 0, display_width, display_height)
+        self.rect_item.setPos(display_x, display_y)
+        
+        # バー形状の特別な設定
+        self.create_bar_shape(display_width, display_height)
+        
+        # 初期表示設定
+        self.update_display()
+    
+    def get_item(self) -> QGraphicsRectItem:
+        return self.rect_item
+    
+    def create_bar_shape(self, width: float, height: float):
+        """バー形状を作成（方向判定と分割線）"""
+        # アスペクト比によるorientation自動判定
+        aspect_ratio = width / height if height > 0 else 1.0
+        self.orientation = "horizontal" if aspect_ratio > 1.0 else "vertical"
+    
+    def update_circumference_display(self):
+        """circumferenceポイントの表示を更新（バー用、直線上配置）"""
+        # 既存の表示を削除
+        for item in self.circumference_items:
+            if item.scene():
+                item.scene().removeItem(item)
+        self.circumference_items.clear()
+        
+        if not self.rect_item.scene():
+            return
+        
+        # 選択されていない場合は表示しない（デバッグ用に一時的にコメントアウト）
+        # if not self.is_selected:
+        #     return
+        
+        print(f"DEBUG BarItem: update_circumference_display called, is_selected={self.is_selected}, points={len(self.circumference_points)}")
+        
+        # バーの位置とサイズを取得
+        rect = self.rect_item.boundingRect()
+        pos = self.rect_item.pos()
+        
+        # circumferenceポイントをvalue順にソート
+        sorted_points = sorted(self.circumference_points, key=lambda p: p.value)
+        
+        print(f"Bar rect: ({pos.x():.2f}, {pos.y():.2f}), size: {rect.width():.2f} x {rect.height():.2f}")
+        print(f"Bar circumference points: {len(sorted_points)}")
+        
+        # 各circumferenceポイントを直線上に配置
+        for i, point in enumerate(sorted_points):
+            try:
+                # value値に基づいて直線上の位置を計算
+                value = point.value
+                
+                if self.orientation == "horizontal":
+                    # 水平バー: 左から右へvalue値で位置決定
+                    point_x = pos.x() + rect.width() * value
+                    point_y = pos.y() + rect.height() / 2
+                else:
+                    # 垂直バー: 下から上へvalue値で位置決定
+                    point_x = pos.x() + rect.width() / 2
+                    point_y = pos.y() + rect.height() * (1.0 - value)  # 反転（上が高い値）
+                
+                # ポイントサイズ（valueによって変化）
+                if point.value == 0 or point.value == 1:
+                    # 開始点と終了点は大きく、赤色
+                    point_size = 16
+                    point_color = QColor(255, 100, 100)
+                else:
+                    # 中間点は通常サイズ、緑色（バー用）
+                    point_size = 12
+                    point_color = QColor(100, 255, 100)
+                
+                # circumferenceポイントアイテム作成
+                point_item = QGraphicsEllipseItem(
+                    point_x - point_size/2,
+                    point_y - point_size/2,
+                    point_size,
+                    point_size
+                )
+                
+                # スタイル設定
+                point_item.setBrush(QBrush(point_color))
+                point_item.setPen(QPen(QColor(255, 255, 255), 2))  # 白枠
+                point_item.setZValue(1002)  # ハンドルより前面
+                
+                # シーンに追加
+                self.rect_item.scene().addItem(point_item)
+                self.circumference_items.append(point_item)
+                
+                # valueテキストを表示
+                value_text = QGraphicsTextItem(f"{point.value:.2f}")
+                value_text.setDefaultTextColor(QColor(255, 255, 0))  # 黄色で見やすく
+                value_text.setFont(QFont("Arial", 14, QFont.Bold))   # 14pxに拡大
+                
+                # 背景色（黒い背景で見やすく）
+                bg_rect = QGraphicsRectItem(value_text.boundingRect(), value_text)
+                bg_rect.setBrush(QBrush(QColor(0, 0, 0, 180)))  # 半透明の黒
+                bg_rect.setPen(QPen(QColor(255, 255, 255, 100), 1))  # 薄い白枠
+                bg_rect.setZValue(-1)  # テキストより後ろ
+                
+                # テキスト位置（ポイントの近く）
+                text_rect = value_text.boundingRect()
+                if self.orientation == "horizontal":
+                    value_text.setPos(
+                        point_x - text_rect.width()/2,
+                        point_y + point_size/2 + 5
+                    )
+                else:
+                    value_text.setPos(
+                        point_x + point_size/2 + 5,
+                        point_y - text_rect.height()/2
+                    )
+                value_text.setZValue(1003)  # 最前面
+                
+                # シーンに追加
+                self.rect_item.scene().addItem(value_text)
+                self.circumference_items.append(value_text)
+                
+                print(f"  Bar Point {i}: value={point.value:.2f}, pos=({point_x:.1f}, {point_y:.1f})")
+                
+            except Exception as e:
+                print(f"Error displaying bar circumference point {i}: {e}")
+    
+    def set_selected(self, selected: bool):
+        """選択状態を設定（circumferenceポイント表示更新）"""
+        super().set_selected(selected)
+        # circumferenceポイント表示を更新
+        self.update_circumference_display()
+    
+    def _create_specific_handles(self):
+        """バー用ハンドル作成（矩形と同じ8方向）"""
+        # 矩形と同じハンドル作成ロジック
+        item = self.get_item()
+        rect = item.boundingRect()
+        pos = item.pos()
+        
+        # 8つのハンドル位置
+        handle_types = [
+            "top_left", "top_center", "top_right", "middle_right",
+            "bottom_right", "bottom_center", "bottom_left", "middle_left"
+        ]
+        
+        positions = [
+            (pos.x() + rect.left(), pos.y() + rect.top()),        # 左上
+            (pos.x() + rect.center().x(), pos.y() + rect.top()),  # 上中央
+            (pos.x() + rect.right(), pos.y() + rect.top()),       # 右上
+            (pos.x() + rect.right(), pos.y() + rect.center().y()),# 右中央
+            (pos.x() + rect.right(), pos.y() + rect.bottom()),    # 右下
+            (pos.x() + rect.center().x(), pos.y() + rect.bottom()),# 下中央
+            (pos.x() + rect.left(), pos.y() + rect.bottom()),     # 左下
+            (pos.x() + rect.left(), pos.y() + rect.center().y())  # 左中央
+        ]
+        
+        for i, (hx, hy) in enumerate(positions):
+            handle = QGraphicsRectItem(
+                hx - self.handle_size/2, 
+                hy - self.handle_size/2, 
+                self.handle_size, 
+                self.handle_size
+            )
+            handle.setBrush(QBrush(QColor(255, 255, 255)))  # 白色
+            handle.setPen(QPen(QColor(0, 0, 0), 1))       # 黒枠
+            handle.setZValue(1001)  # 制御点より前面
+            
+            # ドラッグ可能に設定
+            handle.setFlag(handle.GraphicsItemFlag.ItemIsMovable, True)
+            handle.setAcceptHoverEvents(True)
+            
+            # リサイズハンドラーを設定
+            resize_handler = ResizeHandler(handle, self, handle_types[i])
+            handle.mousePressEvent = resize_handler.mousePressEvent
+            handle.mouseMoveEvent = resize_handler.mouseMoveEvent
+            handle.mouseReleaseEvent = resize_handler.mouseReleaseEvent
+            
+            self.handles.append(handle)
+            self.get_item().scene().addItem(handle)
 
 
 class ModernEditMainView(QWidget):
@@ -1065,9 +2482,9 @@ class ModernEditMainView(QWidget):
     
     def _setup_ui(self):
         """UI設定"""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(16, 16, 16, 16)
+        self.main_layout.setSpacing(12)
         
         # ツールバー（将来の機能拡張用）
         toolbar_layout = QHBoxLayout()
@@ -1124,7 +2541,7 @@ class ModernEditMainView(QWidget):
         original_button.clicked.connect(self._display_at_original_size)
         toolbar_layout.addWidget(original_button)
         
-        layout.addLayout(toolbar_layout)
+        self.main_layout.addLayout(toolbar_layout)
         
         # フルサイズ画像キャンバス
         self.image_canvas = ModernEditImageCanvas()
@@ -1134,7 +2551,8 @@ class ModernEditMainView(QWidget):
         # 初期プレースホルダー表示
         self._show_placeholder()
         
-        layout.addWidget(self.image_canvas)
+        # 画像キャンバスを直接追加（パーツパネルは左サイドバーに移動）
+        self.main_layout.addWidget(self.image_canvas)
     
     def _show_placeholder(self):
         """プレースホルダー表示を設定"""
@@ -1183,10 +2601,548 @@ class ModernEditMainView(QWidget):
     
     def load_vehicle_json(self, vehicle_data: dict):
         """vehicle.jsonデータを読み込み"""
+        print(f"=== EDIT MAIN VIEW: VEHICLE JSON LOAD START ===")
         self.vehicle_data = vehicle_data
         vehicle_name = vehicle_data.get("name", "Unknown")
         print(f"EDIT main view: Vehicle data loaded for {vehicle_name}")
-        # TODO: 将来的にvehicle.jsonの図形データを表示
+        
+        # パーツ選択はサイドバーで行う（右側パネル廃止）
+        
+        # 図形をキャンバスに表示
+        print("=== Displaying vehicle shapes on canvas ===")
+        self._display_vehicle_shapes()
+        
+        print(f"Vehicle JSON loaded: {len(vehicle_data.get('icon', []))} icons, "
+              f"{len(vehicle_data.get('meter', []))} meters, "
+              f"{len(vehicle_data.get('ocr', []))} ocrs")
+        print(f"=== EDIT MAIN VIEW: VEHICLE JSON LOAD COMPLETE ===")
+    
+    def _create_parts_selection_panel(self):
+        """パーツ選択パネルを作成"""
+        if hasattr(self, '_parts_panel'):
+            return  # 既に作成済み
+            
+        # パーツ選択パネル
+        self._parts_panel = QGroupBox("Vehicle Parts")
+        # StyleSheetは後で追加
+        # self._parts_panel.setStyleSheet(ComponentStyles.sidebar())
+        
+        panel_layout = QVBoxLayout()
+        
+        # カテゴリ別チェックボックス
+        category_group = QGroupBox("カテゴリ表示")
+        category_layout = QVBoxLayout()
+        
+        self._icon_checkbox = QCheckBox("Icon (矩形)")
+        self._icon_checkbox.setChecked(True)
+        self._icon_checkbox.stateChanged.connect(lambda: self._toggle_category_visibility('icon'))
+        
+        self._meter_checkbox = QCheckBox("Meter (円形)")
+        self._meter_checkbox.setChecked(True)
+        self._meter_checkbox.stateChanged.connect(lambda: self._toggle_category_visibility('meter'))
+        
+        self._ocr_checkbox = QCheckBox("OCR (矩形)")
+        self._ocr_checkbox.setChecked(True)
+        self._ocr_checkbox.stateChanged.connect(lambda: self._toggle_category_visibility('ocr'))
+        
+        category_layout.addWidget(self._icon_checkbox)
+        category_layout.addWidget(self._meter_checkbox)
+        category_layout.addWidget(self._ocr_checkbox)
+        category_group.setLayout(category_layout)
+        
+        # パーツリストツリー
+        self._parts_tree = QTreeWidget()
+        self._parts_tree.setHeaderLabels(["名前", "カテゴリ", "タイプ"])
+        self._parts_tree.itemClicked.connect(self._on_tree_item_clicked)
+        self._parts_tree.setMaximumHeight(300)
+        
+        panel_layout.addWidget(category_group)
+        panel_layout.addWidget(QLabel("パーツリスト:"))
+        panel_layout.addWidget(self._parts_tree)
+        panel_layout.addStretch()
+        
+        self._parts_panel.setLayout(panel_layout)
+        
+        # パーツパネルを右側に追加（コンテンツレイアウトに1の比率で）
+        self.content_layout.addWidget(self._parts_panel, 1)
+    
+    def _update_parts_list(self):
+        """パーツリストを更新"""
+        if not hasattr(self, '_parts_tree') or not self.vehicle_data:
+            return
+            
+        self._parts_tree.clear()
+        
+        # カテゴリ別にグループ化
+        categories = {
+            'icon': QTreeWidgetItem(["Icons", "", ""]),
+            'meter': QTreeWidgetItem(["Meters", "", ""]),
+            'ocr': QTreeWidgetItem(["OCR", "", ""])
+        }
+        
+        # Iconパーツを追加
+        for i, icon in enumerate(self.vehicle_data.get('icon', [])):
+            item = QTreeWidgetItem([
+                icon.get('name', f'Icon {i+1}'),
+                'Icon',
+                icon.get('shape', 'box')
+            ])
+            item.setData(0, Qt.ItemDataRole.UserRole, {'type': 'icon', 'data': icon, 'index': i})
+            categories['icon'].addChild(item)
+        
+        # Meterパーツを追加
+        for i, meter in enumerate(self.vehicle_data.get('meter', [])):
+            item = QTreeWidgetItem([
+                meter.get('name', f'Meter {i+1}'),
+                'Meter',
+                meter.get('shape', 'circle')
+            ])
+            item.setData(0, Qt.ItemDataRole.UserRole, {'type': 'meter', 'data': meter, 'index': i})
+            categories['meter'].addChild(item)
+        
+        # OCRパーツを追加
+        for i, ocr in enumerate(self.vehicle_data.get('ocr', [])):
+            item = QTreeWidgetItem([
+                ocr.get('name', f'OCR {i+1}'),
+                'OCR',
+                ocr.get('shape', 'box')
+            ])
+            item.setData(0, Qt.ItemDataRole.UserRole, {'type': 'ocr', 'data': ocr, 'index': i})
+            categories['ocr'].addChild(item)
+        
+        # カテゴリをツリーに追加
+        for category, parent in categories.items():
+            if parent.childCount() > 0:
+                self._parts_tree.addTopLevelItem(parent)
+                parent.setExpanded(True)
+    
+    def _toggle_category_visibility(self, category: str):
+        """カテゴリの表示/非表示を切り替え"""
+        checkbox_map = {
+            'icon': self._icon_checkbox,
+            'meter': self._meter_checkbox,
+            'ocr': self._ocr_checkbox
+        }
+        
+        checkbox = checkbox_map.get(category)
+        if checkbox:
+            visible = checkbox.isChecked()
+            self._set_shapes_visibility(category, visible)
+            print(f"Toggle {category} visibility: {visible}")
+    
+    def _set_shapes_visibility(self, category: str, visible: bool):
+        """指定カテゴリの図形の表示/非表示を設定"""
+        if not hasattr(self, '_vehicle_shapes'):
+            return
+            
+        for shape in self._vehicle_shapes:
+            shape_data = shape.data(0)
+            if shape_data and shape_data.get('type') == category:
+                shape.setVisible(visible)
+    
+    def _on_tree_item_clicked(self, item, column):
+        """ツリーアイテムがクリックされた時の処理"""
+        part_data = item.data(0, Qt.ItemDataRole.UserRole)
+        if part_data:
+            part_type = part_data['type']
+            data = part_data['data']
+            index = part_data['index']
+            
+            print(f"Selected {part_type} part: {data.get('name', f'{part_type} {index+1}')}")
+            
+            # キャンバス上で対応する図形をハイライト
+            self._highlight_shape(part_type, index)
+            
+            # 図形位置にビューをセンタリング
+            self._center_view_on_shape(part_type, index)
+    
+    def _highlight_shape(self, part_type: str, index: int):
+        """指定された図形をハイライト"""
+        if not hasattr(self, '_vehicle_shapes'):
+            return
+            
+        # 全ての図形のハイライトを解除
+        for shape in self._vehicle_shapes:
+            self._set_shape_highlight(shape, False)
+        
+        # 指定された図形をハイライト
+        for shape in self._vehicle_shapes:
+            shape_data = shape.data(0)
+            if shape_data and shape_data.get('type') == part_type and shape_data.get('index') == index:
+                self._set_shape_highlight(shape, True)
+                break
+    
+    def _set_shape_highlight(self, shape, highlighted: bool):
+        """図形のハイライト状態を設定"""
+        from PySide6.QtGui import QPen
+        from PySide6.QtCore import Qt
+        
+        if highlighted:
+            # ハイライト時は太い黄色の枠線
+            pen = QPen(QColor(255, 255, 0), 5, Qt.PenStyle.DashLine)
+        else:
+            # 通常時は元の色と太さに戻す
+            shape_data = shape.data(0)
+            if shape_data:
+                shape_type = shape_data.get('type')
+                if shape_type == 'icon':
+                    pen = QPen(QColor(0, 255, 0), 3)
+                elif shape_type == 'meter':
+                    pen = QPen(QColor(0, 0, 255), 3) if shape_data['data'].get('shape') != 'bar' else QPen(QColor(255, 165, 0), 3)
+                elif shape_type == 'ocr':
+                    pen = QPen(QColor(255, 0, 0), 3)
+                else:
+                    pen = QPen(QColor(128, 128, 128), 3)
+            else:
+                pen = QPen(QColor(128, 128, 128), 3)
+        
+        shape.setPen(pen)
+    
+    def _center_view_on_shape(self, part_type: str, index: int):
+        """指定された図形の位置にビューをセンタリング"""
+        if not hasattr(self, '_vehicle_shapes'):
+            return
+            
+        for shape in self._vehicle_shapes:
+            shape_data = shape.data(0)
+            if shape_data and shape_data.get('type') == part_type and shape_data.get('index') == index:
+                # 図形の中心位置を計算
+                rect = shape.boundingRect()
+                center = rect.center()
+                
+                # ビューを図形の中心にセンタリング
+                if self.image_canvas and hasattr(self.image_canvas, 'graphics_view'):
+                    self.image_canvas.graphics_view.centerOn(center)
+                
+                print(f"View centered on {part_type} {index+1}")
+                break
+    
+    def _display_vehicle_shapes(self):
+        """vehicle.jsonの図形をキャンバスに表示（新ResizableGraphicsItemシステム使用）"""
+        if not self.image_canvas or not self.vehicle_data:
+            return
+            
+        # 既存の図形をクリア（もしあれば）
+        self._clear_vehicle_shapes()
+        
+        # 図形を格納するリスト（ResizableGraphicsItemオブジェクト）
+        self._vehicle_shapes = []
+        
+        # 現在のスケール取得（フルサイズ表示は1.0）
+        scene_scale = 1.0
+        
+        # アイコン（矩形）を追加
+        for i, icon in enumerate(self.vehicle_data.get('icon', [])):
+            try:
+                shape_item = self._create_resizable_icon_shape(icon, i, scene_scale)
+                if shape_item:
+                    # QGraphicsItemをシーンに追加
+                    self.image_canvas.scene.addItem(shape_item.get_item())
+                    self._vehicle_shapes.append(shape_item)
+                    
+                    # パーツ名と制御点を作成
+                    shape_item.create_name_text(icon.get('name', f'Icon {i+1}'))
+                    shape_item.update_center_control_point()
+                    
+                    print(f"Resizable Icon shape added: {icon.get('name', f'Icon {i+1}')}")
+            except Exception as e:
+                print(f"Error creating resizable icon shape {i}: {e}")
+        
+        # メーター（円形・バー）を追加
+        for i, meter in enumerate(self.vehicle_data.get('meter', [])):
+            try:
+                shape_item = self._create_resizable_meter_shape(meter, i, scene_scale)
+                if shape_item:
+                    # QGraphicsItemをシーンに追加
+                    self.image_canvas.scene.addItem(shape_item.get_item())
+                    self._vehicle_shapes.append(shape_item)
+                    
+                    # パーツ名と制御点を作成
+                    shape_item.create_name_text(meter.get('name', f'Meter {i+1}'))
+                    shape_item.update_center_control_point()
+                    
+                    # circumferenceポイントを初期表示（main.pyと同じ処理順序）
+                    if hasattr(shape_item, 'update_circumference_display'):
+                        shape_item.update_circumference_display()
+                    
+                    print(f"Resizable Meter shape added: {meter.get('name', f'Meter {i+1}')}")
+            except Exception as e:
+                print(f"Error creating resizable meter shape {i}: {e}")
+        
+        # OCR（矩形）を追加
+        for i, ocr in enumerate(self.vehicle_data.get('ocr', [])):
+            try:
+                shape_item = self._create_resizable_ocr_shape(ocr, i, scene_scale)
+                if shape_item:
+                    # QGraphicsItemをシーンに追加
+                    self.image_canvas.scene.addItem(shape_item.get_item())
+                    self._vehicle_shapes.append(shape_item)
+                    
+                    # パーツ名と制御点を作成
+                    shape_item.create_name_text(ocr.get('name', f'OCR {i+1}'))
+                    shape_item.update_center_control_point()
+                    
+                    print(f"Resizable OCR shape added: {ocr.get('name', f'OCR {i+1}')}")
+            except Exception as e:
+                print(f"Error creating resizable OCR shape {i}: {e}")
+        
+        print(f"Resizable Vehicle shapes displayed: {len(self._vehicle_shapes)} shapes")
+    
+    def _clear_vehicle_shapes(self):
+        """既存の図形をクリア（新ResizableGraphicsItemシステム対応）"""
+        if hasattr(self, '_vehicle_shapes'):
+            for shape in self._vehicle_shapes:
+                try:
+                    # ResizableGraphicsItemオブジェクトの場合
+                    if hasattr(shape, 'get_item'):
+                        graphics_item = shape.get_item()
+                        if graphics_item.scene():
+                            graphics_item.scene().removeItem(graphics_item)
+                        
+                        # 制御点も削除
+                        if shape.center_control_point and shape.center_control_point.scene():
+                            shape.center_control_point.scene().removeItem(shape.center_control_point)
+                        
+                        # パーツ名テキストも削除
+                        if shape.name_text_item and shape.name_text_item.scene():
+                            shape.name_text_item.scene().removeItem(shape.name_text_item)
+                        
+                        # ハンドルも削除
+                        for handle in shape.handles:
+                            if handle.scene():
+                                handle.scene().removeItem(handle)
+                        
+                        # circumferenceアイテムも削除
+                        if hasattr(shape, 'circumference_items'):
+                            for circ_item in shape.circumference_items:
+                                if circ_item.scene():
+                                    circ_item.scene().removeItem(circ_item)
+                    
+                    # 旧システム対応（QGraphicsItemの場合）
+                    elif hasattr(shape, 'scene') and shape.scene():
+                        shape.scene().removeItem(shape)
+                except:
+                    pass
+            self._vehicle_shapes.clear()
+    
+    def _create_resizable_icon_shape(self, icon_data: dict, index: int, scene_scale: float):
+        """ResizableGraphicsItemシステム用Icon形状作成"""
+        try:
+            top_left = icon_data.get('top_left', {})
+            bottom_right = icon_data.get('bottom_right', {})
+            
+            x = top_left.get('x', 0)
+            y = top_left.get('y', 0)
+            w = bottom_right.get('x', 0) - x
+            h = bottom_right.get('y', 0) - y
+            
+            # ResizableRectItemを作成（icon用）
+            shape_item = ResizableRectItem(
+                x, y, w, h,
+                scene_scale=scene_scale,
+                category=ShapeCategory.ICON,
+                is_original_coords=True,  # vehicle.jsonの座標は元座標
+                main_view=self  # ModernEditMainViewの参照を渡す
+            )
+            
+            return shape_item
+            
+        except Exception as e:
+            print(f"Error creating resizable icon shape: {e}")
+            return None
+    
+    def _create_resizable_meter_shape(self, meter_data: dict, index: int, scene_scale: float):
+        """ResizableGraphicsItemシステム用Meter形状作成"""
+        try:
+            shape_type = meter_data.get('shape', 'circle')
+            
+            # circumferenceポイント変換
+            circumference_points = []
+            for cp_data in meter_data.get('circumference', []):
+                cp = CircumferencePoint(
+                    position=cp_data.get('position', {}),
+                    value=cp_data.get('value', 0.0)
+                )
+                circumference_points.append(cp)
+            
+            if shape_type == 'circle':
+                # 円形メーター
+                center = meter_data.get('center', {})
+                radius = meter_data.get('radius', 100)
+                
+                x = center.get('x', 0) - radius
+                y = center.get('y', 0) - radius
+                w = h = radius * 2
+                
+                shape_item = ResizableEllipseItem(
+                    x, y, w, h,
+                    scene_scale=scene_scale,
+                    category=ShapeCategory.METER,
+                    is_original_coords=True,
+                    circumference_points=circumference_points,
+                    main_view=self
+                )
+                
+            elif shape_type == 'bar':
+                # バー形状メーター
+                center = meter_data.get('center', {})
+                radius = meter_data.get('radius', 50)  # バーの場合は半分の長さ
+                
+                # バーのサイズを仮設定（実際はcircumferenceポイントから決定）
+                x = center.get('x', 0) - radius
+                y = center.get('y', 0) - 25
+                w = radius * 2
+                h = 50
+                
+                shape_item = BarShapeItem(
+                    x, y, w, h,
+                    scene_scale=scene_scale,
+                    category=ShapeCategory.METER,
+                    is_original_coords=True,
+                    circumference_points=circumference_points,
+                    main_view=self
+                )
+                
+            else:
+                print(f"Unknown meter shape type: {shape_type}")
+                return None
+            
+            return shape_item
+            
+        except Exception as e:
+            print(f"Error creating resizable meter shape: {e}")
+            return None
+    
+    def _create_resizable_ocr_shape(self, ocr_data: dict, index: int, scene_scale: float):
+        """ResizableGraphicsItemシステム用OCR形状作成"""
+        try:
+            top_left = ocr_data.get('top_left', {})
+            bottom_right = ocr_data.get('bottom_right', {})
+            
+            x = top_left.get('x', 0)
+            y = top_left.get('y', 0)
+            w = bottom_right.get('x', 0) - x
+            h = bottom_right.get('y', 0) - y
+            
+            # ResizableRectItemを作成（ocr用）
+            shape_item = ResizableRectItem(
+                x, y, w, h,
+                scene_scale=scene_scale,
+                category=ShapeCategory.OCR,
+                is_original_coords=True,  # vehicle.jsonの座標は元座標
+                main_view=self
+            )
+            
+            return shape_item
+            
+        except Exception as e:
+            print(f"Error creating resizable OCR shape: {e}")
+            return None
+    
+    def _create_icon_shape(self, icon_data: dict, index: int):
+        """Icon形状を作成"""
+        from PySide6.QtWidgets import QGraphicsRectItem
+        from PySide6.QtGui import QPen, QBrush
+        from PySide6.QtCore import Qt
+        
+        try:
+            top_left = icon_data.get('top_left', {})
+            bottom_right = icon_data.get('bottom_right', {})
+            
+            x = top_left.get('x', 0)
+            y = top_left.get('y', 0)
+            w = bottom_right.get('x', 0) - x
+            h = bottom_right.get('y', 0) - y
+            
+            # 矩形アイテム作成
+            rect_item = QGraphicsRectItem(x, y, w, h)
+            
+            # スタイル設定（緑色の枠線、半透明の塗りつぶし）
+            pen = QPen(QColor(0, 255, 0), 3)  # 緑色の枠線
+            brush = QBrush(QColor(0, 255, 0, 50))  # 半透明の緑色
+            rect_item.setPen(pen)
+            rect_item.setBrush(brush)
+            
+            # データを保存
+            rect_item.setData(0, {'type': 'icon', 'data': icon_data, 'index': index})
+            
+            return rect_item
+            
+        except Exception as e:
+            print(f"Error creating icon shape: {e}")
+            return None
+    
+    def _create_meter_shape(self, meter_data: dict, index: int):
+        """Meter形状を作成"""
+        from PySide6.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem
+        from PySide6.QtGui import QPen, QBrush
+        from PySide6.QtCore import Qt
+        
+        try:
+            center = meter_data.get('center', {})
+            radius = meter_data.get('radius', 50)
+            shape_type = meter_data.get('shape', 'circle')
+            
+            x = center.get('x', 0) - radius
+            y = center.get('y', 0) - radius
+            w = radius * 2
+            h = radius * 2
+            
+            if shape_type == 'bar':
+                # バー形状（矩形）
+                shape_item = QGraphicsRectItem(x, y, w, h)
+                pen = QPen(QColor(255, 165, 0), 3)  # オレンジ色の枠線
+                brush = QBrush(QColor(255, 165, 0, 50))  # 半透明のオレンジ色
+            else:
+                # 円形
+                shape_item = QGraphicsEllipseItem(x, y, w, h)
+                pen = QPen(QColor(0, 0, 255), 3)  # 青色の枠線
+                brush = QBrush(QColor(0, 0, 255, 50))  # 半透明の青色
+            
+            shape_item.setPen(pen)
+            shape_item.setBrush(brush)
+            
+            # データを保存
+            shape_item.setData(0, {'type': 'meter', 'data': meter_data, 'index': index})
+            
+            return shape_item
+            
+        except Exception as e:
+            print(f"Error creating meter shape: {e}")
+            return None
+    
+    def _create_ocr_shape(self, ocr_data: dict, index: int):
+        """OCR形状を作成"""
+        from PySide6.QtWidgets import QGraphicsRectItem
+        from PySide6.QtGui import QPen, QBrush
+        from PySide6.QtCore import Qt
+        
+        try:
+            top_left = ocr_data.get('top_left', {})
+            bottom_right = ocr_data.get('bottom_right', {})
+            
+            x = top_left.get('x', 0)
+            y = top_left.get('y', 0)
+            w = bottom_right.get('x', 0) - x
+            h = bottom_right.get('y', 0) - y
+            
+            # 矩形アイテム作成
+            rect_item = QGraphicsRectItem(x, y, w, h)
+            
+            # スタイル設定（赤色の枠線、半透明の塗りつぶし）
+            pen = QPen(QColor(255, 0, 0), 3)  # 赤色の枠線
+            brush = QBrush(QColor(255, 0, 0, 50))  # 半透明の赤色
+            rect_item.setPen(pen)
+            rect_item.setBrush(brush)
+            
+            # データを保存
+            rect_item.setData(0, {'type': 'ocr', 'data': ocr_data, 'index': index})
+            
+            return rect_item
+            
+        except Exception as e:
+            print(f"Error creating OCR shape: {e}")
+            return None
     
     def load_full_image(self, image_data: bytes):
         """RestAPIまたはMQTTから取得した画像を表示（フルサイズ対応）"""
@@ -1254,6 +3210,180 @@ class ModernEditMainView(QWidget):
         """フルサイズ画像サイズを設定（config.jsonから）"""
         if self.image_canvas:
             self.image_canvas.set_full_image_size(width, height)
+    
+    def _highlight_part(self, category, index):
+        """指定されたパーツをハイライト（ResizableGraphicsItemシステム対応）"""
+        try:
+            if not hasattr(self, '_vehicle_shapes') or not self._vehicle_shapes:
+                print("No vehicle shapes to highlight")
+                return
+                
+            # すべてのハイライトを解除（選択状態をリセット）
+            self._clear_all_highlights()
+            
+            # 指定されたパーツをハイライト（選択状態に設定）
+            shape_index = self._get_shape_index_by_category(category, index)
+            if 0 <= shape_index < len(self._vehicle_shapes):
+                shape_item = self._vehicle_shapes[shape_index]
+                if shape_item and hasattr(shape_item, 'set_selected'):
+                    # ResizableGraphicsItemの選択状態を設定
+                    shape_item.set_selected(True)
+                    
+                    # パーツの中心に画面をフォーカス
+                    self._center_view_on_part(category, index)
+                    
+                    print(f"Selected {category} #{index} (ResizableGraphicsItem)")
+            
+        except Exception as e:
+            print(f"Error highlighting part: {e}")
+    
+    def _clear_all_highlights(self):
+        """すべてのハイライトを解除（ResizableGraphicsItemシステム対応）"""
+        try:
+            if not hasattr(self, '_vehicle_shapes') or not self._vehicle_shapes:
+                return
+                
+            for i, shape_item in enumerate(self._vehicle_shapes):
+                if shape_item and hasattr(shape_item, 'set_selected'):
+                    # ResizableGraphicsItemの選択状態を解除
+                    shape_item.set_selected(False)
+                elif shape_item:
+                    # 旧システム対応（QGraphicsItemの場合）
+                    original_pen = self._get_original_pen_for_shape_index(i)
+                    shape_item.setPen(original_pen)
+                    
+        except Exception as e:
+            print(f"Error clearing highlights: {e}")
+    
+    def _get_original_pen_for_shape_index(self, shape_index):
+        """図形インデックスから元のペンを取得"""
+        from PySide6.QtGui import QPen, QColor
+        
+        if not self.vehicle_data:
+            return QPen(QColor(128, 128, 128), 2)  # デフォルト色
+            
+        # インデックスからカテゴリを判定
+        current_index = 0
+        icon_count = len(self.vehicle_data.get('icon', []))
+        meter_count = len(self.vehicle_data.get('meter', []))
+        
+        if shape_index < current_index + icon_count:
+            return QPen(QColor(0, 255, 0), 2)  # 緑 - Icon
+        current_index += icon_count
+        
+        if shape_index < current_index + meter_count:
+            return QPen(QColor(0, 150, 255), 2)  # 青 - Meter
+        
+        return QPen(QColor(255, 100, 0), 2)  # オレンジ - OCR
+    
+    def _get_shape_index_by_category(self, category, part_index):
+        """カテゴリとパーツインデックスから図形配列のインデックスを取得"""
+        if not self.vehicle_data:
+            return -1
+            
+        current_index = 0
+        
+        # Icon
+        if category == 'icon':
+            return current_index + part_index
+        current_index += len(self.vehicle_data.get('icon', []))
+        
+        # Meter  
+        if category == 'meter':
+            return current_index + part_index
+        current_index += len(self.vehicle_data.get('meter', []))
+        
+        # OCR
+        if category == 'ocr':
+            return current_index + part_index
+            
+        return -1
+    
+    def _center_view_on_part(self, category, index):
+        """指定されたパーツにビューをセンタリング"""
+        try:
+            if not self.vehicle_data or not self.image_canvas:
+                return
+                
+            # パーツの中心座標を計算
+            center_x, center_y = None, None
+            
+            if category == 'icon':
+                icons = self.vehicle_data.get('icon', [])
+                if 0 <= index < len(icons):
+                    icon = icons[index]
+                    top_left = icon.get('top_left', {})
+                    bottom_right = icon.get('bottom_right', {})
+                    center_x = (top_left.get('x', 0) + bottom_right.get('x', 0)) / 2
+                    center_y = (top_left.get('y', 0) + bottom_right.get('y', 0)) / 2
+            elif category == 'meter':
+                meters = self.vehicle_data.get('meter', [])
+                if 0 <= index < len(meters):
+                    meter = meters[index]
+                    center = meter.get('center', {})
+                    center_x = center.get('x', 0)
+                    center_y = center.get('y', 0)
+            elif category == 'ocr':
+                ocrs = self.vehicle_data.get('ocr', [])
+                if 0 <= index < len(ocrs):
+                    ocr = ocrs[index]
+                    top_left = ocr.get('top_left', {})
+                    bottom_right = ocr.get('bottom_right', {})
+                    center_x = (top_left.get('x', 0) + bottom_right.get('x', 0)) / 2
+                    center_y = (top_left.get('y', 0) + bottom_right.get('y', 0)) / 2
+            
+            if center_x is not None and center_y is not None:
+                self.image_canvas.centerOn(center_x, center_y)
+                print(f"Centered view on {category} #{index} at ({center_x}, {center_y})")
+                
+        except Exception as e:
+            print(f"Error centering view on part: {e}")
+    
+    def _toggle_category_visibility(self, category, visible):
+        """カテゴリの表示切り替え（ResizableGraphicsItemシステム対応）"""
+        try:
+            if not hasattr(self, '_vehicle_shapes') or not self._vehicle_shapes:
+                return
+                
+            # カテゴリ別にResizableGraphicsItemの表示/非表示を切り替え
+            for shape_item in self._vehicle_shapes:
+                if hasattr(shape_item, 'category') and hasattr(shape_item, 'set_visible'):
+                    # ResizableGraphicsItemの場合
+                    if (category == 'icon' and shape_item.category == ShapeCategory.ICON) or \
+                       (category == 'meter' and shape_item.category == ShapeCategory.METER) or \
+                       (category == 'ocr' and shape_item.category == ShapeCategory.OCR):
+                        shape_item.set_visible(visible)
+                elif shape_item:
+                    # 旧システム対応（QGraphicsItemの場合）
+                    current_index = 0
+                    
+                    if category == 'icon':
+                        icon_count = len(self.vehicle_data.get('icon', [])) if self.vehicle_data else 0
+                        for i in range(current_index, current_index + icon_count):
+                            if i < len(self._vehicle_shapes) and self._vehicle_shapes[i]:
+                                self._vehicle_shapes[i].setVisible(visible)
+                        break
+                    current_index += len(self.vehicle_data.get('icon', [])) if self.vehicle_data else 0
+                    
+                    if category == 'meter':
+                        meter_count = len(self.vehicle_data.get('meter', [])) if self.vehicle_data else 0
+                        for i in range(current_index, current_index + meter_count):
+                            if i < len(self._vehicle_shapes) and self._vehicle_shapes[i]:
+                                self._vehicle_shapes[i].setVisible(visible)
+                        break
+                    current_index += len(self.vehicle_data.get('meter', [])) if self.vehicle_data else 0
+                    
+                    if category == 'ocr':
+                        ocr_count = len(self.vehicle_data.get('ocr', [])) if self.vehicle_data else 0
+                        for i in range(current_index, current_index + ocr_count):
+                            if i < len(self._vehicle_shapes) and self._vehicle_shapes[i]:
+                                self._vehicle_shapes[i].setVisible(visible)
+                        break
+            
+            print(f"{category.capitalize()} visibility set to {visible} (ResizableGraphicsItem)")
+                
+        except Exception as e:
+            print(f"Error toggling category visibility: {e}")
 
 
 class ModernMonitorMainView(QWidget):
@@ -1493,6 +3623,9 @@ class VehicleMonitorModernApplication(QMainWindow):
         
         # CONFIG起動時のファイルダイアログ自動表示（設定は空状態で開始）
         self._auto_show_config_dialog()
+        
+        # MQTTメッセージを初期状態でミュート（デバッグ用）
+        self.set_mqtt_muted(True)
         
         # 初期化完了フラグ
         self._initialized = True
@@ -2046,6 +4179,10 @@ class VehicleMonitorModernApplication(QMainWindow):
     
     def _on_mqtt_image_received(self, image_data: str):
         """MQTT画像受信時の処理"""
+        # MQTTメッセージがミュートされている場合はスキップ
+        if getattr(self, '_mqtt_muted', False):
+            return
+            
         print(f">>> MQTT画像を受信しました (データ長: {len(image_data)}) <<<")
         print(f">>> 現在のモード: {self.app_state.current_mode} <<<")
         
@@ -2079,6 +4216,19 @@ class VehicleMonitorModernApplication(QMainWindow):
         
         else:
             print(f">>> 現在のモードは{self.app_state.current_mode}なので画像表示をスキップします <<<")
+    
+    def set_mqtt_muted(self, muted: bool):
+        """MQTTメッセージのミュート状態を設定"""
+        self._mqtt_muted = muted
+        if muted:
+            print("=== MQTTメッセージをミュートしました ===")
+        else:
+            print("=== MQTTメッセージミュートを解除しました ===")
+    
+    def toggle_mqtt_muted(self):
+        """MQTTメッセージミュート状態を切り替え"""
+        current_state = getattr(self, '_mqtt_muted', False)
+        self.set_mqtt_muted(not current_state)
     
     def _fetch_full_image_from_restapi(self):
         """CONFIG→EDIT遷移時にRestAPIから/full_imageを自動取得"""
