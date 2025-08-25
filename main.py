@@ -17,6 +17,9 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QGraphicsView,
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QSizeF
 from PySide6.QtGui import QPixmap, QPen, QBrush, QColor, QWheelEvent, QPainter, QPainterPath
 
+# デバッグフラグ
+DEBUG_MODE = False
+
 
 class ShapeType(Enum):
     RECTANGLE = "rectangle"
@@ -170,28 +173,43 @@ class ResizableGraphicsItem:
         rect = item.boundingRect()
         pos = item.pos()
         
-        # ハンドルタイプを定義（リサイズ方向を示す）
-        handle_types = [
-            "top_left",      # 左上
-            "top_center",    # 上中央
-            "top_right",     # 右上
-            "middle_right",  # 右中央
-            "bottom_right",  # 右下
-            "bottom_center", # 下中央
-            "bottom_left",   # 左下
-            "middle_left",   # 左中央
-        ]
+        # 円形の場合は四隅のハンドルを除外
+        is_circle = (self.shape_type == ShapeType.CIRCLE if hasattr(self, 'shape_type') else False)
         
-        positions = [
-            (pos.x() + rect.left(), pos.y() + rect.top()),      # 左上
-            (pos.x() + rect.center().x(), pos.y() + rect.top()),  # 上中央
-            (pos.x() + rect.right(), pos.y() + rect.top()),     # 右上
-            (pos.x() + rect.right(), pos.y() + rect.center().y()),  # 右中央
-            (pos.x() + rect.right(), pos.y() + rect.bottom()),  # 右下
-            (pos.x() + rect.center().x(), pos.y() + rect.bottom()),  # 下中央
-            (pos.x() + rect.left(), pos.y() + rect.bottom()),   # 左下
-            (pos.x() + rect.left(), pos.y() + rect.center().y()),  # 左中央
-        ]
+        if is_circle:
+            # 円形: 左右の2つのハンドルのみ（半径変更用）
+            handle_types = [
+                "middle_right",  # 右中央
+                "middle_left",   # 左中央
+            ]
+            
+            positions = [
+                (pos.x() + rect.right(), pos.y() + rect.center().y()),  # 右中央
+                (pos.x() + rect.left(), pos.y() + rect.center().y()),  # 左中央
+            ]
+        else:
+            # 矩形: 8つのハンドル全て
+            handle_types = [
+                "top_left",      # 左上
+                "top_center",    # 上中央
+                "top_right",     # 右上
+                "middle_right",  # 右中央
+                "bottom_right",  # 右下
+                "bottom_center", # 下中央
+                "bottom_left",   # 左下
+                "middle_left",   # 左中央
+            ]
+            
+            positions = [
+                (pos.x() + rect.left(), pos.y() + rect.top()),      # 左上
+                (pos.x() + rect.center().x(), pos.y() + rect.top()),  # 上中央
+                (pos.x() + rect.right(), pos.y() + rect.top()),     # 右上
+                (pos.x() + rect.right(), pos.y() + rect.center().y()),  # 右中央
+                (pos.x() + rect.right(), pos.y() + rect.bottom()),  # 右下
+                (pos.x() + rect.center().x(), pos.y() + rect.bottom()),  # 下中央
+                (pos.x() + rect.left(), pos.y() + rect.bottom()),   # 左下
+                (pos.x() + rect.left(), pos.y() + rect.center().y()),  # 左中央
+            ]
         
         for i, (x, y) in enumerate(positions):
             handle = QGraphicsRectItem(
@@ -457,6 +475,9 @@ class CenterControlPoint:
             # ハンドルを再作成して正しい位置に配置
             self.parent_shape.create_handles()
             
+            # 円形の場合はcircumferenceポイントは既に正しい位置にあるので再描画不要
+            # 座標データは update_original_coordinates() で更新済み
+            
             # デフォルトの処理も実行
             QGraphicsEllipseItem.mouseReleaseEvent(self.control_point_item, event)
     
@@ -476,6 +497,12 @@ class CenterControlPoint:
         for handle in self.parent_shape.handles:
             handle_pos = handle.pos()
             handle.setPos(handle_pos.x() + delta_x, handle_pos.y() + delta_y)
+        
+        # circumferenceポイントの移動（楕円の場合）
+        if hasattr(self.parent_shape, 'circumference_items'):
+            for item in self.parent_shape.circumference_items:
+                item_pos = item.pos()
+                item.setPos(item_pos.x() + delta_x, item_pos.y() + delta_y)
     
     def update_original_coordinates(self):
         """移動後の位置を元座標に反映"""
@@ -486,6 +513,29 @@ class CenterControlPoint:
         scale = self.parent_shape.scene_scale
         self.parent_shape.original_x = current_pos.x() / scale
         self.parent_shape.original_y = current_pos.y() / scale
+        
+        # 円形の場合は元の中心座標も更新
+        if hasattr(self.parent_shape, 'original_center_x') and hasattr(self.parent_shape, 'original_center_y'):
+            rect = shape_item.boundingRect()
+            center_x = current_pos.x() + rect.width() / 2
+            center_y = current_pos.y() + rect.height() / 2
+            self.parent_shape.original_center_x = center_x
+            self.parent_shape.original_center_y = center_y
+        
+        # circumferenceポイントの元座標も更新（楕円の場合）
+        if hasattr(self.parent_shape, 'circumference_points') and hasattr(self.parent_shape, 'circumference_items'):
+            for i, point_data in enumerate(self.parent_shape.circumference_points):
+                # 対応するアイテムを見つける（マーカーは偶数インデックス）
+                marker_index = i * 2
+                if marker_index < len(self.parent_shape.circumference_items):
+                    marker_item = self.parent_shape.circumference_items[marker_index]
+                    marker_pos = marker_item.pos()
+                    # マーカーの中心位置を計算（マーカーサイズの半分を加算）
+                    marker_center_x = marker_pos.x() + 16  # marker_size/2 = 32/2 = 16
+                    marker_center_y = marker_pos.y() + 16
+                    # 元座標を更新
+                    point_data.position.x = marker_center_x / scale
+                    point_data.position.y = marker_center_y / scale
 
 
 class ResizeHandle:
@@ -540,6 +590,11 @@ class ResizeHandle:
             self.parent_shape.update_name_display()
             self.parent_shape.update_center_control_point()
             
+            # 円形の場合はcircumferenceポイントも更新（リサイズ時のみ実行）
+            if hasattr(self.parent_shape, 'update_circumference_display'):
+                # リサイズ完了後なので再描画が必要
+                self.parent_shape.update_circumference_display()
+            
             # デフォルトの処理を実行
             QGraphicsRectItem.mouseReleaseEvent(self.handle_item, event)
     
@@ -547,39 +602,70 @@ class ResizeHandle:
         """ハンドルタイプに応じて図形をリサイズ"""
         item = self.parent_shape.get_item()
         
+        # 円形かどうか判定
+        is_circle = (self.parent_shape.shape_type == ShapeType.CIRCLE if hasattr(self.parent_shape, 'shape_type') else False)
+        
         # 現在の矩形情報
         new_x = self.start_item_pos.x()
         new_y = self.start_item_pos.y()
         new_width = self.start_rect.width()
         new_height = self.start_rect.height()
         
-        # ハンドルタイプに応じて調整
-        if "left" in self.handle_type:
-            # 左側のハンドル: 左端を移動（幅を調整）
-            new_x = self.start_item_pos.x() + delta_x
-            new_width = self.start_rect.width() - delta_x
-        elif "right" in self.handle_type:
-            # 右側のハンドル: 右端を移動（幅を調整）
-            new_width = self.start_rect.width() + delta_x
-        
-        if "top" in self.handle_type:
-            # 上側のハンドル: 上端を移動（高さを調整）
-            new_y = self.start_item_pos.y() + delta_y
-            new_height = self.start_rect.height() - delta_y
-        elif "bottom" in self.handle_type:
-            # 下側のハンドル: 下端を移動（高さを調整）
-            new_height = self.start_rect.height() + delta_y
-        
-        # 最小サイズ制限
-        if new_width < 20:
-            new_width = 20
+        if is_circle:
+            # 円形の場合: 半径の変更（縦横比維持）
+            center_x = self.start_item_pos.x() + self.start_rect.width() / 2
+            center_y = self.start_item_pos.y() + self.start_rect.height() / 2
+            
             if "left" in self.handle_type:
-                new_x = self.start_item_pos.x() + self.start_rect.width() - 20
-        
-        if new_height < 20:
-            new_height = 20
+                # 左側のハンドル: 半径を縮小
+                new_radius = (self.start_rect.width() / 2) - delta_x
+            elif "right" in self.handle_type:
+                # 右側のハンドル: 半径を拡大
+                new_radius = (self.start_rect.width() / 2) + delta_x
+            else:
+                new_radius = self.start_rect.width() / 2
+            
+            # 最小半径制限
+            if new_radius < 10:
+                new_radius = 10
+            
+            # 新しい直径
+            new_diameter = new_radius * 2
+            
+            # 中心点から新しい位置を計算
+            new_x = center_x - new_radius
+            new_y = center_y - new_radius
+            new_width = new_diameter
+            new_height = new_diameter
+        else:
+            # 矩形の場合: 従来通りの処理
+            # ハンドルタイプに応じて調整
+            if "left" in self.handle_type:
+                # 左側のハンドル: 左端を移動（幅を調整）
+                new_x = self.start_item_pos.x() + delta_x
+                new_width = self.start_rect.width() - delta_x
+            elif "right" in self.handle_type:
+                # 右側のハンドル: 右端を移動（幅を調整）
+                new_width = self.start_rect.width() + delta_x
+            
             if "top" in self.handle_type:
-                new_y = self.start_item_pos.y() + self.start_rect.height() - 20
+                # 上側のハンドル: 上端を移動（高さを調整）
+                new_y = self.start_item_pos.y() + delta_y
+                new_height = self.start_rect.height() - delta_y
+            elif "bottom" in self.handle_type:
+                # 下側のハンドル: 下端を移動（高さを調整）
+                new_height = self.start_rect.height() + delta_y
+            
+            # 最小サイズ制限
+            if new_width < 20:
+                new_width = 20
+                if "left" in self.handle_type:
+                    new_x = self.start_item_pos.x() + self.start_rect.width() - 20
+            
+            if new_height < 20:
+                new_height = 20
+                if "top" in self.handle_type:
+                    new_y = self.start_item_pos.y() + self.start_rect.height() - 20
         
         # 図形を更新
         item.setPos(new_x, new_y)
@@ -597,16 +683,27 @@ class ResizeHandle:
         rect = item.boundingRect()
         pos = item.pos()
         
-        positions = [
-            (pos.x() + rect.left(), pos.y() + rect.top()),      # 左上
-            (pos.x() + rect.center().x(), pos.y() + rect.top()),  # 上中央
-            (pos.x() + rect.right(), pos.y() + rect.top()),     # 右上
-            (pos.x() + rect.right(), pos.y() + rect.center().y()),  # 右中央
-            (pos.x() + rect.right(), pos.y() + rect.bottom()),  # 右下
-            (pos.x() + rect.center().x(), pos.y() + rect.bottom()),  # 下中央
-            (pos.x() + rect.left(), pos.y() + rect.bottom()),   # 左下
-            (pos.x() + rect.left(), pos.y() + rect.center().y()),  # 左中央
-        ]
+        # 円形かどうか判定
+        is_circle = (self.parent_shape.shape_type == ShapeType.CIRCLE if hasattr(self.parent_shape, 'shape_type') else False)
+        
+        if is_circle:
+            # 円形: 左右2つのハンドル
+            positions = [
+                (pos.x() + rect.right(), pos.y() + rect.center().y()),  # 右中央
+                (pos.x() + rect.left(), pos.y() + rect.center().y()),  # 左中央
+            ]
+        else:
+            # 矩形: 8つのハンドル
+            positions = [
+                (pos.x() + rect.left(), pos.y() + rect.top()),      # 左上
+                (pos.x() + rect.center().x(), pos.y() + rect.top()),  # 上中央
+                (pos.x() + rect.right(), pos.y() + rect.top()),     # 右上
+                (pos.x() + rect.right(), pos.y() + rect.center().y()),  # 右中央
+                (pos.x() + rect.right(), pos.y() + rect.bottom()),  # 右下
+                (pos.x() + rect.center().x(), pos.y() + rect.bottom()),  # 下中央
+                (pos.x() + rect.left(), pos.y() + rect.bottom()),   # 左下
+                (pos.x() + rect.left(), pos.y() + rect.center().y()),  # 左中央
+            ]
         
         # 現在ドラッグ中のハンドル以外を更新
         for i, handle in enumerate(self.parent_shape.handles):
@@ -627,6 +724,13 @@ class ResizeHandle:
         self.parent_shape.original_y = pos.y() / scale
         self.parent_shape.original_width = rect.width() / scale
         self.parent_shape.original_height = rect.height() / scale
+        
+        # 円形の場合は元の中心座標も更新
+        if hasattr(self.parent_shape, 'original_center_x') and hasattr(self.parent_shape, 'original_center_y'):
+            center_x = pos.x() + rect.width() / 2
+            center_y = pos.y() + rect.height() / 2
+            self.parent_shape.original_center_x = center_x
+            self.parent_shape.original_center_y = center_y
     
     def hoverEnterEvent(self, event):
         """ホバー時にハンドルを強調表示"""
@@ -653,6 +757,293 @@ class ResizeHandle:
         self.handle_item.setCursor(Qt.ArrowCursor)
         
         QGraphicsRectItem.hoverLeaveEvent(self.handle_item, event)
+
+
+class CircumferencePointDrag:
+    """circumferenceポイントのドラッグハンドラ（円上を移動）"""
+    
+    def __init__(self, point_item, parent_ellipse, point_data, index):
+        self.point_item = point_item
+        self.parent_ellipse = parent_ellipse
+        self.point_data = point_data
+        self.index = index
+        self.is_dragging = False
+        
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = True
+            # 親図形にドラッグ中フラグを設定
+            self.parent_ellipse.circumference_dragging = True
+            # イベントを消費して、選択解除を防ぐ
+            event.accept()
+    
+    def mouseMoveEvent(self, event):
+        if self.is_dragging:
+            # 円の中心と半径を取得
+            rect = self.parent_ellipse.ellipse_item.boundingRect()
+            pos = self.parent_ellipse.ellipse_item.pos()
+            center_x = pos.x() + rect.width() / 2
+            center_y = pos.y() + rect.height() / 2
+            radius = rect.width() / 2
+            
+            # マウス位置から角度を計算（右が0度、反時計回り）
+            mouse_pos = event.scenePos()
+            dx = mouse_pos.x() - center_x
+            dy = mouse_pos.y() - center_y
+            
+            import math
+            # マウス位置の角度を計算（0〜2π）
+            mouse_angle = math.atan2(dy, dx)
+            if mouse_angle < 0:
+                mouse_angle += 2 * math.pi
+            
+            # 角度をvalue（0〜1）に変換
+            target_value = mouse_angle / (2 * math.pi)
+            
+            # value順序制約を適用
+            sorted_points = sorted(self.parent_ellipse.circumference_points, key=lambda p: p.value)
+            current_index = next((i for i, p in enumerate(sorted_points) if p == self.point_data), -1)
+            
+            if current_index >= 0:
+                min_value = 0.0
+                max_value = 1.0
+                
+                # 前のポイントのvalue制約
+                if current_index > 0:
+                    min_value = sorted_points[current_index - 1].value + 0.01  # 1%マージン
+                
+                # 次のポイントのvalue制約
+                if current_index < len(sorted_points) - 1:
+                    max_value = sorted_points[current_index + 1].value - 0.01  # 1%マージン
+                
+                # target_valueを制約範囲内に収める
+                target_value = max(min_value, min(max_value, target_value))
+            
+            # valueから角度を計算（0〜2π）
+            final_angle = target_value * 2 * math.pi
+            
+            # 円周上の座標を計算
+            new_x = center_x + radius * math.cos(final_angle)
+            new_y = center_y + radius * math.sin(final_angle)
+            
+            # ポイントマーカーの位置を更新
+            marker_size = 32
+            self.point_item.setPos(new_x - marker_size/2, new_y - marker_size/2)
+            
+            # テキストの位置を更新
+            try:
+                text_index = self.parent_ellipse.circumference_items.index(self.point_item) + 1
+                if text_index < len(self.parent_ellipse.circumference_items):
+                    text_item = self.parent_ellipse.circumference_items[text_index]
+                    text_offset = 30
+                    text_x = center_x + (radius + text_offset) * math.cos(final_angle)
+                    text_y = center_y + (radius + text_offset) * math.sin(final_angle)
+                    text_item.setPos(text_x - 15, text_y - 15)
+            except (ValueError, IndexError):
+                pass
+            
+            # 元座標系での位置を更新
+            scale = self.parent_ellipse.scene_scale
+            self.point_data.position.x = new_x / scale
+            self.point_data.position.y = new_y / scale
+            
+            event.accept()
+    
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = False
+            # 親図形のドラッグ中フラグをクリア
+            self.parent_ellipse.circumference_dragging = False
+            # circumferenceドラッグ終了後は再描画不要（既に正しい位置にある）
+            # self.parent_ellipse.update_circumference_display()
+            event.accept()
+
+
+class CircumferencePointItem(QGraphicsEllipseItem):
+    """circumferenceポイント用のカスタムアイテム"""
+    
+    def __init__(self, x, y, width, height, parent_ellipse, point_data, index):
+        super().__init__(x, y, width, height)
+        self.parent_ellipse = parent_ellipse
+        self.point_data = point_data
+        self.index = index
+        self.is_dragging = False
+        
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = True
+            self.parent_ellipse.circumference_dragging = True
+            event.accept()
+        
+    def mouseMoveEvent(self, event):
+        if self.is_dragging:
+            # 円の中心と半径を取得
+            rect = self.parent_ellipse.ellipse_item.boundingRect()
+            pos = self.parent_ellipse.ellipse_item.pos()
+            center_x = pos.x() + rect.width() / 2
+            center_y = pos.y() + rect.height() / 2
+            radius = rect.width() / 2
+            
+            # デバッグ出力
+            if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Circle center: ({center_x:.2f}, {center_y:.2f})")
+            if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Circle pos: ({pos.x():.2f}, {pos.y():.2f})")
+            if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Circle rect: {rect.width():.2f} x {rect.height():.2f}")
+            if DEBUG_MODE: print(f"[DEBUG mouseMoveEvent] Radius: {radius:.2f}")
+            
+            # マウス位置から角度を計算
+            mouse_pos = event.scenePos()
+            dx = mouse_pos.x() - center_x
+            dy = mouse_pos.y() - center_y
+            
+            import math
+            # マウス位置の角度を計算
+            mouse_angle = math.atan2(dy, dx)
+            
+            # 前回の角度との差を計算して連続回転を判定
+            if hasattr(self.point_data, '_last_angle'):
+                angle_diff = mouse_angle - self.point_data._last_angle
+                
+                # 角度の不連続性を検出（-π〜πの境界をまたぐ場合）
+                if angle_diff > math.pi:
+                    angle_diff -= 2 * math.pi
+                elif angle_diff < -math.pi:
+                    angle_diff += 2 * math.pi
+                
+                # 累積角度を更新（360度以上の回転を記録）
+                if hasattr(self.point_data, '_accumulated_angle'):
+                    self.point_data._accumulated_angle += angle_diff
+                else:
+                    self.point_data._accumulated_angle = mouse_angle
+            else:
+                # 初回の場合
+                self.point_data._accumulated_angle = mouse_angle
+            
+            self.point_data._last_angle = mouse_angle
+            
+            # 累積角度を0〜2πの範囲に正規化（表示用）
+            normalized_angle = self.point_data._accumulated_angle % (2 * math.pi)
+            if normalized_angle < 0:
+                normalized_angle += 2 * math.pi
+            
+            # 角度制約を適用（valueは変更しない、valueが小さいほど角度も小さく）
+            # circumferenceポイントをvalue順にソート
+            sorted_points = sorted(self.parent_ellipse.circumference_points, key=lambda p: p.value)
+            current_index = next((i for i, p in enumerate(sorted_points) if p == self.point_data), -1)
+            
+            # 各ポイントの現在の角度を取得
+            point_angles = []
+            for point in sorted_points:
+                if hasattr(point, '_calculated_angle'):
+                    angle = point._calculated_angle
+                    # 角度を0〜2πに正規化
+                    if angle < 0:
+                        angle += 2 * math.pi
+                    elif angle >= 2 * math.pi:
+                        angle = angle % (2 * math.pi)
+                    point_angles.append(angle)
+                else:
+                    # 初期角度がない場合はvalueから推定
+                    point_angles.append(point.value * 2 * math.pi)
+            
+            # 角度制約を計算
+            min_angle = 0.0
+            max_angle = 2 * math.pi
+            margin = 0.05  # 約3度のマージン
+            
+            if current_index >= 0:
+                # 前のポイント（小さいvalue）: 小さいvalueは大きい角度なので、このポイントはそれより小さい角度でなければならない
+                if current_index > 0:
+                    max_angle = point_angles[current_index - 1] - margin
+                
+                # 次のポイント（大きいvalue）: 大きいvalueは小さい角度なので、このポイントはそれより大きい角度でなければならない
+                if current_index < len(sorted_points) - 1:
+                    min_angle = point_angles[current_index + 1] + margin
+                
+                # 制約を適用
+                # min_angle > max_angle の場合は2πをまたいでいる
+                if min_angle >= max_angle:
+                    # 2πをまたぐ場合は制約を緩和
+                    if normalized_angle >= min_angle or normalized_angle <= max_angle:
+                        # 現在の角度が許可範囲内
+                        pass
+                    else:
+                        # 最も近い許可範囲の境界に移動
+                        dist_to_min = abs(normalized_angle - min_angle)
+                        dist_to_max = abs(normalized_angle - max_angle)
+                        if dist_to_min < dist_to_max:
+                            normalized_angle = min_angle
+                        else:
+                            normalized_angle = max_angle
+                else:
+                    # 通常の場合
+                    normalized_angle = max(min_angle, min(max_angle, normalized_angle))
+            
+            # 制約された角度を使用
+            final_angle = normalized_angle
+            
+            # 円周上の座標を計算（制約された角度を使用）
+            new_x = center_x + radius * math.cos(final_angle)
+            new_y = center_y + radius * math.sin(final_angle)
+            
+            # このアイテムの位置を更新
+            marker_size = 32
+            self.setPos(new_x - marker_size/2, new_y - marker_size/2)
+            
+            # 対応するテキストアイテムも更新
+            try:
+                text_index = self.parent_ellipse.circumference_items.index(self) + 1
+                if text_index < len(self.parent_ellipse.circumference_items):
+                    text_item = self.parent_ellipse.circumference_items[text_index]
+                    text_offset = 30
+                    text_x = center_x + (radius + text_offset) * math.cos(final_angle)
+                    text_y = center_y + (radius + text_offset) * math.sin(final_angle)
+                    text_item.setPos(text_x - 15, text_y - 15)
+            except (ValueError, IndexError):
+                pass
+            
+            # 元座標系での位置を更新
+            scale = self.parent_ellipse.scene_scale
+            self.point_data.position.x = new_x / scale
+            self.point_data.position.y = new_y / scale
+            
+            event.accept()
+        
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.is_dragging = False
+            self.parent_ellipse.circumference_dragging = False
+            
+            # ドラッグ完了後、現在の位置から新しい角度を計算して保存
+            rect = self.parent_ellipse.ellipse_item.boundingRect()
+            pos = self.parent_ellipse.ellipse_item.pos()
+            center_x = pos.x() + rect.width() / 2
+            center_y = pos.y() + rect.height() / 2
+            
+            # マーカーの中心位置を取得
+            marker_pos = self.pos()
+            marker_center_x = marker_pos.x() + 16  # marker_size/2
+            marker_center_y = marker_pos.y() + 16
+            
+            # 円の中心からマーカーの中心への角度を計算
+            dx = marker_center_x - center_x
+            dy = marker_center_y - center_y
+            
+            import math
+            new_angle = math.atan2(dy, dx)
+            
+            # 正規化された角度を保存（次回の表示更新で使用される）
+            self.point_data._calculated_angle = new_angle
+            
+            # 累積角度もリセット（ドラッグ完了時）
+            if hasattr(self.point_data, '_accumulated_angle'):
+                delattr(self.point_data, '_accumulated_angle')
+            if hasattr(self.point_data, '_last_angle'):
+                delattr(self.point_data, '_last_angle')
+            
+            # ドラッグ完了時にcircumferenceポイントを再描画
+            self.parent_ellipse.update_circumference_display()
+            
+            event.accept()
 
 
 class CenterControlPointHover:
@@ -899,7 +1290,7 @@ class ResizableEllipseItem(ResizableGraphicsItem):
     
     def __init__(self, x: float, y: float, width: float, height: float,
                  scene_scale: float = 1.0, category: ShapeCategory = ShapeCategory.CUSTOM,
-                 is_original_coords: bool = False):
+                 is_original_coords: bool = False, circumference_points: List[CircumferencePoint] = None):
         # 実寸ベース + ウィンドウフィットシステム
         if is_original_coords:
             # フルサイズ座標からウィンドウフィット表示座標へ変換
@@ -926,10 +1317,168 @@ class ResizableEllipseItem(ResizableGraphicsItem):
         self.shape_type = ShapeType.CIRCLE
         self.update_color()
         
+        # circumferenceポイントデータを保存
+        self.circumference_points = circumference_points or []
+        self.circumference_items = []  # 表示用のグラフィックアイテム
+        self.circumference_dragging = False  # ドラッグ中フラグ
+        
+        # 元の中心座標を初期化（circumferenceポイントの相対位置計算用）
+        rect = self.ellipse_item.boundingRect()
+        pos = self.ellipse_item.pos()
+        self.original_center_x = pos.x() + rect.width() / 2
+        self.original_center_y = pos.y() + rect.height() / 2
+        
+        # circumferenceポイントを表示
+        self.update_circumference_display()
+        
         # 重心制御点とパーツ名を作成
         self.create_center_control_point()
         self.create_name_text()
+    
+    def update_circumference_display(self):
+        """circumferenceポイントの表示を更新（選択時のみ）"""
+        # シンプルなドラッグ中チェック
+        if hasattr(self, 'circumference_dragging') and self.circumference_dragging:
+            return  # circumferenceドラッグ中は更新しない
         
+        # 中心制御点がドラッグ中かチェック
+        if hasattr(self, 'center_control_point_handler'):
+            if hasattr(self.center_control_point_handler, 'is_dragging') and self.center_control_point_handler.is_dragging:
+                return  # 中心点ドラッグ中も更新しない
+        
+        # 既存の表示を削除
+        for item in self.circumference_items:
+            if item.scene():
+                item.scene().removeItem(item)
+        self.circumference_items.clear()
+        
+        if not self.ellipse_item.scene():
+            return
+        
+        # 選択されていない場合は表示しない
+        if not self.is_selected:
+            return
+        
+        # 円の中心と半径を計算
+        rect = self.ellipse_item.boundingRect()
+        pos = self.ellipse_item.pos()
+        center_x = pos.x() + rect.width() / 2
+        center_y = pos.y() + rect.height() / 2
+        radius = rect.width() / 2  # 正円なので幅から半径を計算
+        
+        import math
+        
+        # circumferenceポイントをvalue順にソート
+        sorted_points = sorted(self.circumference_points, key=lambda p: p.value)
+        
+        # デバッグ出力
+        if DEBUG_MODE: print(f"[DEBUG update_circumference_display] Circle center: ({center_x:.2f}, {center_y:.2f})")
+        if DEBUG_MODE: print(f"[DEBUG update_circumference_display] Circle pos: ({pos.x():.2f}, {pos.y():.2f})")
+        if DEBUG_MODE: print(f"[DEBUG update_circumference_display] Circle rect: {rect.width():.2f} x {rect.height():.2f}")
+        if DEBUG_MODE: print(f"[DEBUG update_circumference_display] Radius: {radius:.2f}")
+        if DEBUG_MODE: print(f"[DEBUG update_circumference_display] Circumference points: {len(sorted_points)}")
+        
+        # 各circumferenceポイントを現在の円の中心・半径に基づいて配置
+        for i, point in enumerate(sorted_points):
+            # vehicle.jsonのposition座標がある場合、それから角度を逆算
+            if hasattr(point, 'position') and point.position:
+                # 初期設定時のみ：vehicle.jsonの座標から角度を計算して保存
+                if not hasattr(point, '_calculated_angle'):
+                    # vehicle.jsonで定義された元の円の中心を取得
+                    # （これは初期化時の円の中心と仮定）
+                    original_center_x = self.original_center_x if hasattr(self, 'original_center_x') else center_x
+                    original_center_y = self.original_center_y if hasattr(self, 'original_center_y') else center_y
+                    
+                    # 元の座標から角度を計算
+                    rel_x = point.position.x - original_center_x
+                    rel_y = point.position.y - original_center_y
+                    point._calculated_angle = math.atan2(rel_y, rel_x)
+                
+                # 計算された角度を使用して現在の円周上に配置
+                display_x = center_x + radius * math.cos(point._calculated_angle)
+                display_y = center_y + radius * math.sin(point._calculated_angle)
+            else:
+                # position座標がない場合：valueから角度を計算
+                angle = point.value * 2 * math.pi - math.pi / 2  # -π/2で上方向を0とする
+                display_x = center_x + radius * math.cos(angle)
+                display_y = center_y + radius * math.sin(angle)
+            
+            if DEBUG_MODE: 
+                angle_debug = point.value * 2 * math.pi - math.pi / 2 if not (hasattr(point, 'position') and point.position) else 0
+                print(f"[DEBUG] Point {i}: value={point.value:.3f}, angle={angle_debug:.3f}, pos=({display_x:.2f}, {display_y:.2f})")
+            
+            # ポイントマーカー（大きな円）
+            marker_size = 32  # さらに大きくして選択しやすく
+            point_marker = CircumferencePointItem(
+                display_x - marker_size/2,
+                display_y - marker_size/2,
+                marker_size,
+                marker_size,
+                self,
+                point,
+                i
+            )
+            point_marker.setBrush(QBrush(QColor(255, 128, 0)))  # オレンジ色
+            point_marker.setPen(QPen(QColor(0, 0, 0), 2))
+            point_marker.setZValue(1500)  # ハンドルより前面
+            point_marker.setFlag(QGraphicsItem.ItemIsMovable, True)
+            point_marker.setAcceptHoverEvents(True)
+            
+            # カスタムデータとして元のポイントデータを保存
+            point_marker.setData(0, point)
+            point_marker.setData(1, i)  # インデックスも保存
+            
+            # 値を表示するテキスト（大きく）
+            from PySide6.QtWidgets import QGraphicsTextItem
+            from PySide6.QtGui import QFont
+            value_text = QGraphicsTextItem(f"{point.value:.2f}")
+            
+            # テキストの位置を円の外側に配置
+            text_offset = 30
+            # ポイントから円の中心への方向ベクトルを計算
+            dx = display_x - center_x
+            dy = display_y - center_y
+            distance = math.sqrt(dx*dx + dy*dy)
+            if distance > 0:
+                # 正規化してテキスト位置を計算
+                text_x = display_x + (dx / distance) * text_offset
+                text_y = display_y + (dy / distance) * text_offset
+            else:
+                text_x = display_x + text_offset
+                text_y = display_y
+            value_text.setPos(text_x - 15, text_y - 15)  # 中央寄せ調整
+            
+            font = QFont("Arial", 16, QFont.Bold)  # フォントサイズを大きく
+            value_text.setFont(font)
+            value_text.setDefaultTextColor(QColor(255, 128, 0))
+            value_text.setZValue(1501)
+            
+            # シーンに追加
+            self.ellipse_item.scene().addItem(point_marker)
+            self.ellipse_item.scene().addItem(value_text)
+            
+            self.circumference_items.append(point_marker)
+            self.circumference_items.append(value_text)
+    
+    def update_position_for_scale(self, scale: float):
+        """スケール変更時の位置更新（circumferenceポイントも更新）"""
+        super().update_position_for_scale(scale)
+        # circumferenceポイントの表示も更新
+        self.update_circumference_display()
+    
+    def set_visible(self, visible: bool):
+        """表示/非表示を設定（circumferenceポイントも同期）"""
+        super().set_visible(visible)
+        # circumferenceポイントの表示も同期
+        for item in self.circumference_items:
+            item.setVisible(visible)
+    
+    def set_selected(self, selected: bool):
+        """選択状態を設定し、表示を更新（circumferenceポイントも含む）"""
+        super().set_selected(selected)
+        # circumferenceポイントの表示も更新
+        self.update_circumference_display()
+    
     def get_item(self) -> QGraphicsEllipseItem:
         return self.ellipse_item
 
@@ -1130,7 +1679,7 @@ class ImageCanvas(QGraphicsView):
     def mousePressEvent(self, event):
         """マウスプレスイベント"""
         if self.drawing_mode and event.button() == Qt.LeftButton:
-            self.start_pos = self.mapToScene(event.pos())
+            self.start_pos = self.mapToScene(event.position().toPoint())
             
             # 一時的な図形を作成
             if self.drawing_mode == "rectangle":
@@ -1146,20 +1695,26 @@ class ImageCanvas(QGraphicsView):
                 self.scene.addItem(self.temp_item)
         elif event.button() == Qt.LeftButton:
             # クリック位置のアイテムを取得
-            click_pos = self.mapToScene(event.pos())
+            click_pos = self.mapToScene(event.position().toPoint())
             clicked_item = self.scene.itemAt(click_pos, self.transform())
             
-            # クリックされたアイテムがリサイズハンドルかチェック
+            # クリックされたアイテムがリサイズハンドルまたはcircumferenceポイントかチェック
             is_resize_handle = False
+            is_circumference_point = False
             if clicked_item:
                 # 選択中の図形のハンドルかチェック
                 for shape in self.shapes:
                     if shape.is_selected and clicked_item in shape.handles:
                         is_resize_handle = True
                         break
+                    # circumferenceポイントかチェック（選択中の楕円のみ）
+                    if (shape.is_selected and hasattr(shape, 'circumference_items') 
+                        and clicked_item in shape.circumference_items):
+                        is_circumference_point = True
+                        break
             
-            # リサイズハンドルがクリックされた場合は選択解除しない
-            if not is_resize_handle:
+            # リサイズハンドルまたはcircumferenceポイントがクリックされた場合は選択解除しない
+            if not is_resize_handle and not is_circumference_point:
                 # 描画モードでない場合、最も近い制御点を探して選択
                 # 制御点がクリックされなかった場合は全選択解除
                 if not self.select_nearest_control_point(click_pos):
@@ -1216,7 +1771,7 @@ class ImageCanvas(QGraphicsView):
     def mouseMoveEvent(self, event):
         """マウス移動イベント（ラバーバンド）"""
         if self.drawing_mode and self.start_pos and self.temp_item:
-            current_pos = self.mapToScene(event.pos())
+            current_pos = self.mapToScene(event.position().toPoint())
             
             # 矩形のサイズを更新
             width = current_pos.x() - self.start_pos.x()
@@ -1625,11 +2180,13 @@ class VehicleMonitorEditor(QMainWindow):
             w = meter.radius * 2
             h = meter.radius * 2
             
-            # 計算したスケールで作成
-            shape = ResizableEllipseItem(x, y, w, h, current_scale, ShapeCategory.METER, True)
+            # 計算したスケールで作成（circumferenceポイントも渡す）
+            shape = ResizableEllipseItem(x, y, w, h, current_scale, ShapeCategory.METER, True, meter.circumference)
             shape.name = meter.name
             self.canvas.scene.addItem(shape.get_item())
             self.canvas.shapes.append(shape)
+            # circumferenceポイントの表示を更新
+            shape.update_circumference_display()
         
         # OCR（矩形）を追加
         for ocr in self.vehicle_data.ocr:
