@@ -9,6 +9,7 @@ from typing import Optional
 
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QSizePolicy
 from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QPixmap, QPainter, QColor, QFont
 
 # データモデル
 from models.app_state import AppState
@@ -253,14 +254,194 @@ class ModernMonitorMainView(QWidget):
     def __init__(self, app_state: AppState, parent=None):
         super().__init__(parent)
         self.app_state = app_state
+        
+        # 画像表示関連
+        self.current_image = None
+        self.image_label = None
+        self.image_count = 0
+        self.last_image_time = ""
+        
         self._setup_ui()
     
     def _setup_ui(self):
         """UI設定"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(0)
         
-        # 空のメイン画面
+        # 画像表示エリア
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setMinimumSize(800, 600)
+        self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # setScaledContentsをFalseに変更（手動スケーリング使用）
+        self.image_label.setScaledContents(False)
+        
+        # 初期プレースホルダー画像を設定
+        self._create_placeholder_image()
+        
+        # フレーム・ボーダーを設定
+        self.image_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {DesignTokens.COLORS['dark']['surface_1']};
+                border: 2px solid {DesignTokens.COLORS['dark']['border']};
+                border-radius: 12px;
+                padding: 8px;
+            }}
+        """)
+        
+        layout.addWidget(self.image_label)
+    
+    def _create_placeholder_image(self):
+        """プレースホルダー画像を作成"""
+        try:
+            print(f"=== Creating placeholder image ===")
+            print(f"=== Widget hierarchy: {type(self).__name__} -> {type(self.image_label).__name__} ===")
+            print(f"=== Image label size: {self.image_label.size().width()}x{self.image_label.size().height()} ===")
+            print(f"=== Image label geometry: {self.image_label.geometry()} ===")
+            print(f"=== Image label visible: {self.image_label.isVisible()} ===")
+            print(f"=== Image label enabled: {self.image_label.isEnabled()} ===")
+            print(f"=== Parent visible: {self.isVisible()} ===")
+            
+            # 固定サイズでプレースホルダー画像を作成
+            placeholder = QPixmap(800, 600)
+            placeholder.fill(QColor('#2D2D30'))  # 直接色指定で確実に設定
+            
+            # 中央にテキストを描画
+            painter = QPainter(placeholder)
+            painter.setPen(QColor('#FFFFFF'))
+            painter.setFont(QFont("Segoe UI", 32, QFont.Weight.Bold))
+            painter.drawText(placeholder.rect(), Qt.AlignmentFlag.AlignCenter, "MONITOR画面")
+            
+            # サブテキスト
+            painter.setFont(QFont("Segoe UI", 18))
+            painter.setPen(QColor('#B0B0B0'))
+            text_rect = placeholder.rect()
+            text_rect.setTop(text_rect.center().y() + 40)
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, "画像待機中...")
+            painter.end()
+            
+            # プレースホルダー画像を設定
+            self.image_label.setPixmap(placeholder)
+            self.image_label.setText("")  # テキストをクリア
+            
+            print(f"=== Placeholder image created and set ===")
+            print(f"=== Placeholder pixmap size: {placeholder.size().width()}x{placeholder.size().height()} ===")
+            print(f"=== Has pixmap after set: {not self.image_label.pixmap().isNull() if self.image_label.pixmap() else False} ===")
+            
+            # 強制更新とredraw
+            self.image_label.update()
+            self.image_label.repaint()
+            
+        except Exception as e:
+            print(f"=== ERROR: Placeholder image creation error: {e} ===")
+            import traceback
+            traceback.print_exc()
+            # フォールバック: テキストのみ表示
+            self.image_label.setText("MONITOR画面\n画像待機中...")
+            self.image_label.setStyleSheet(f"""
+                QLabel {{
+                    background-color: #2D2D30;
+                    color: #FFFFFF;
+                    font-size: 18px;
+                    font-weight: bold;
+                    border: 2px solid #484848;
+                    border-radius: 12px;
+                    padding: 20px;
+                }}
+            """)
+    
+    def update_image(self, image_base64: str):
+        """画像を更新（MQTT受信時に呼び出し）"""
+        try:
+            print(f"=== MONITOR update_image called with data length: {len(image_base64) if image_base64 else 0} ===")
+            
+            if not image_base64:
+                return
+            
+            # 画像統計を更新
+            self.image_count += 1
+            from datetime import datetime
+            self.last_image_time = datetime.now().strftime("%H:%M:%S")
+            
+            # Base64デコード
+            import base64
+            image_bytes = base64.b64decode(image_base64)
+            print(f"=== Base64 decoded successfully, binary size: {len(image_bytes)} bytes ===")
+            
+            # QPixmapに変換
+            pixmap = QPixmap()
+            if pixmap.loadFromData(image_bytes):
+                print(f"=== Original pixmap size: {pixmap.size().width()}x{pixmap.size().height()} ===")
+                
+                # ラベルの利用可能サイズを取得（パディングとボーダーを除く）
+                label_geometry = self.image_label.geometry()
+                available_width = max(label_geometry.width() - 20, 200)  # パディング+ボーダー分を除く
+                available_height = max(label_geometry.height() - 20, 150)
+                
+                print(f"=== Label geometry: {label_geometry} ===")
+                print(f"=== Available display size: {available_width}x{available_height} ===")
+                
+                # アスペクト比を保持して適切にスケーリング
+                if available_width > 100 and available_height > 100:
+                    scaled_pixmap = pixmap.scaled(
+                        available_width, available_height,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    print(f"=== Scaled to: {scaled_pixmap.size().width()}x{scaled_pixmap.size().height()} ===")
+                    self.image_label.setPixmap(scaled_pixmap)
+                else:
+                    # サイズが無効な場合、固定サイズでスケーリング
+                    scaled_pixmap = pixmap.scaled(
+                        800, 600,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    print(f"=== Fixed scale to: {scaled_pixmap.size().width()}x{scaled_pixmap.size().height()} ===")
+                    self.image_label.setPixmap(scaled_pixmap)
+                
+                # プレースホルダーテキストをクリア
+                self.image_label.setText("")
+                self.current_image = image_base64
+                
+                print(f"=== SUCCESS: Monitor image displayed (size: {len(image_bytes)} bytes) ===")
+                print(f"Monitor image updated: {self.image_count} frames at {self.last_image_time}")
+                
+                # ウィジェット状態の詳細を確認
+                print(f"=== Label visible: {self.image_label.isVisible()} ===")
+                print(f"=== Label enabled: {self.image_label.isEnabled()} ===")
+                print(f"=== Has pixmap: {not self.image_label.pixmap().isNull() if self.image_label.pixmap() else False} ===")
+                
+                # UI更新を強制実行
+                self.image_label.update()
+                self.image_label.repaint()
+                
+                # 親ウィジェットの更新
+                parent = self.image_label.parent()
+                while parent:
+                    parent.update()
+                    parent = parent.parent()
+                    
+            else:
+                print("=== ERROR: Failed to load image from base64 data ===")
+                
+        except Exception as e:
+            print(f"=== EXCEPTION: Monitor image update error: {e} ===")
+            import traceback
+            traceback.print_exc()
+    
+    def get_image_stats(self) -> dict:
+        """画像統計を取得"""
+        return {
+            "count": self.image_count,
+            "last_update": self.last_image_time
+        }
+    
+    def reset_stats(self):
+        """統計をリセット"""
+        self.image_count = 0
+        self.last_image_time = ""
 
 
 class VehicleMonitorModernApplication(QMainWindow):
@@ -331,7 +512,12 @@ class VehicleMonitorModernApplication(QMainWindow):
         
         # MONITOR
         self.mode_components[AppMode.MONITOR]['sidebar'] = MonitorModernSidebar(self.app_state)
-        self.mode_components[AppMode.MONITOR]['main_view'] = ModernMonitorMainView(self.app_state)
+        monitor_main_view = ModernMonitorMainView(self.app_state)
+        self.mode_components[AppMode.MONITOR]['main_view'] = monitor_main_view
+        
+        # MQTTサービスとMONITORビューを接続
+        self.mqtt_service.image_received.connect(monitor_main_view.update_image)
+        print("MQTT service connected to MONITOR main view for image updates")
     
     def _setup_framework(self):
         """フレームワーク設定"""
@@ -362,6 +548,19 @@ class VehicleMonitorModernApplication(QMainWindow):
         # フレームワークに設定
         self.framework.set_sidebar(sidebar)
         self.framework.set_main_content(main_view)
+        
+        # モード別のサイドバー表示状態を設定
+        if new_mode == AppMode.MONITOR:
+            # MONITORモードではサイドバーをデフォルトで非表示
+            self.app_state.sidebar_expanded = False
+            self.framework.set_sidebar_visible(False)
+            print("MONITOR mode: Sidebar set to collapsed by default")
+        elif new_mode == AppMode.CONFIG:
+            # CONFIGモードではサイドバーをデフォルトで表示
+            self.app_state.sidebar_expanded = True
+            self.framework.set_sidebar_visible(True)
+            print("CONFIG mode: Sidebar set to expanded by default")
+        # EDITモードは既存の状態を維持
         
         # ヘッダー更新
         self.framework.header.update_mode(new_mode)
@@ -485,7 +684,7 @@ class VehicleMonitorModernApplication(QMainWindow):
         print(f">>> MQTT画像を受信しました (データ長: {len(image_data)}) <<<")
         print(f">>> 現在のモード: {self.app_state.current_mode} <<<")
         
-        # CONFIGモードの場合、メイン画面に画像を表示
+        # CONFIGモードとMONITORモードで画像を表示
         if self.app_state.current_mode == AppMode.CONFIG:
             print(">>> CONFIGモードです - メイン画面に表示します <<<")
             config_main_view = self.mode_components[AppMode.CONFIG]['main_view']
@@ -496,6 +695,18 @@ class VehicleMonitorModernApplication(QMainWindow):
                 config_main_view.update_mqtt_image(image_data)
             else:
                 print(">>> ERROR: update_mqtt_image メソッドが見つかりません <<<")
+        
+        elif self.app_state.current_mode == AppMode.MONITOR:
+            print(">>> MONITORモードです - メイン画面に表示します <<<")
+            monitor_main_view = self.mode_components[AppMode.MONITOR]['main_view']
+            print(f">>> Monitor main view: {monitor_main_view} <<<")
+            
+            if hasattr(monitor_main_view, 'update_image'):
+                print(">>> update_image メソッドを呼び出します <<<")
+                monitor_main_view.update_image(image_data)
+            else:
+                print(">>> ERROR: update_image メソッドが見つかりません <<<")
+        
         else:
             print(f">>> 現在のモードは{self.app_state.current_mode}なので画像表示をスキップします <<<")
 

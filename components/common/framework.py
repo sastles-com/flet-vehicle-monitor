@@ -42,16 +42,36 @@ class ModernHeader(QWidget):
         layout.setContentsMargins(20, 10, 20, 10)
         layout.setSpacing(20)
         
+        # 統一レイアウト: メニューボタン + 左ボタンエリア + タイトル + 右ボタンエリア
+        
         # 左側: メニューボタン
         self.menu_btn = QPushButton("☰")
         self.menu_btn.setFixedSize(36, 36)
         self.menu_btn.clicked.connect(self.menu_toggled.emit)
         layout.addWidget(self.menu_btn)
         
-        # 中央: タイトルとブレッドクラム
+        # 左ボタンエリア（EDITモードに戻るボタン）
+        left_button_layout = QHBoxLayout()
+        left_button_layout.setContentsMargins(0, 0, 0, 0)
+        
+        if self.current_mode == AppMode.MONITOR:
+            self.edit_return_btn = QPushButton("EDITモードに戻る")
+            self.edit_return_btn.setMinimumSize(120, 32)
+            self.edit_return_btn.clicked.connect(lambda: self.mode_changed.emit(AppMode.EDIT))
+            left_button_layout.addWidget(self.edit_return_btn)
+        else:
+            # 他のモードでは空のスペース
+            left_button_layout.addStretch()
+        
+        self.left_button_widget = QWidget()
+        self.left_button_widget.setLayout(left_button_layout)
+        self.left_button_widget.setFixedWidth(150)  # 固定幅でバランス調整
+        layout.addWidget(self.left_button_widget)
+        
+        # 中央: タイトルエリア
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
-        title_layout.setContentsMargins(0, 0, 0, 0)  # 固定マージン削除
+        title_layout.setContentsMargins(0, 0, 0, 0)
         
         self.title_label = QLabel()
         self.title_label.setAlignment(Qt.AlignCenter)
@@ -64,15 +84,17 @@ class ModernHeader(QWidget):
         
         title_widget = QWidget()
         title_widget.setLayout(title_layout)
-        layout.addWidget(title_widget, 1)  # 拡張
+        layout.addWidget(title_widget, 1)  # 拡張してセンタリング
         
-        # 右側: アクションボタン群
+        # 右側: START/STOPボタンエリア
         self.action_layout = QHBoxLayout()
         self.action_layout.setSpacing(12)
+        self.action_layout.setContentsMargins(0, 0, 0, 0)
         self._create_action_buttons()
         
         action_widget = QWidget()
         action_widget.setLayout(self.action_layout)
+        action_widget.setFixedWidth(150)  # 固定幅でバランス調整
         layout.addWidget(action_widget)
         
         self._update_content()
@@ -88,7 +110,7 @@ class ModernHeader(QWidget):
             self.action_buttons['config'] = self._create_mode_button("CONFIG", AppMode.CONFIG)
             self.action_buttons['monitor'] = self._create_mode_button("MONITOR", AppMode.MONITOR)
         else:  # MONITOR
-            self.action_buttons['edit'] = self._create_mode_button("EDIT", AppMode.EDIT)
+            # EDITボタンは左側に配置済みなので、右側にはSTART/STOPのみ
             self.action_buttons['start_stop'] = self._create_start_stop_button()
         
         # ボタンを追加
@@ -138,10 +160,70 @@ class ModernHeader(QWidget):
     
     def _create_start_stop_button(self) -> QPushButton:
         """START/STOPボタン作成"""
-        button = QPushButton("START")
-        button.setMinimumSize(70, 32)
-        # TODO: START/STOP機能の実装
-        return button
+        self.start_stop_button = QPushButton("START")
+        self.start_stop_button.setMinimumSize(80, 36)
+        self.start_stop_button.setCheckable(True)  # トグルボタンとして動作
+        self.start_stop_button.clicked.connect(self._on_start_stop_clicked)
+        
+        # 初期スタイル（START状態）
+        self._update_start_stop_style(False)
+        
+        return self.start_stop_button
+    
+    def _on_start_stop_clicked(self):
+        """START/STOPボタンクリック時の処理"""
+        is_monitoring = self.start_stop_button.isChecked()
+        
+        # ボタンテキストと色を切り替え
+        if is_monitoring:
+            self.start_stop_button.setText("STOP")
+        else:
+            self.start_stop_button.setText("START")
+        
+        self._update_start_stop_style(is_monitoring)
+        
+        print(f"Monitor status changed: {'STOP (monitoring)' if is_monitoring else 'START (stopped)'}")
+        
+        # TODO: MQTT制御メッセージ送信の実装
+    
+    def _update_start_stop_style(self, is_monitoring: bool):
+        """START/STOPボタンのスタイルを更新"""
+        if is_monitoring:
+            # STOP状態（赤いボタン）
+            self.start_stop_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {DesignTokens.COLORS['red'][600]};
+                    color: white;
+                    border: none;
+                    border-radius: 8px;
+                    font-weight: 600;
+                    font-size: 13px;
+                }}
+                QPushButton:hover {{
+                    background-color: {DesignTokens.COLORS['red'][700]};
+                }}
+                QPushButton:pressed {{
+                    background-color: {DesignTokens.COLORS['red'][800]};
+                }}
+            """)
+        else:
+            # START状態（デフォルト色）
+            self.start_stop_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {DesignTokens.COLORS['primary'][600]};
+                    color: white;
+                    border: none;
+                    border-radius: 8px;
+                    font-weight: 600;
+                    font-size: 13px;
+                }}
+                QPushButton:hover {{
+                    background-color: {DesignTokens.COLORS['primary'][500]};
+                }}
+                QPushButton:pressed {{
+                    background-color: {DesignTokens.COLORS['primary'][700]};
+                }}
+            """)
     
     def _apply_styles(self):
         """スタイル適用"""
@@ -184,6 +266,9 @@ class ModernHeader(QWidget):
         self.current_mode = new_mode
         self.app_state.current_mode = new_mode
         
+        # 左右のボタンエリアを再構築
+        self._update_button_areas()
+        
         # アクションボタンを再作成
         self._clear_action_buttons()
         self._create_action_buttons()
@@ -191,6 +276,28 @@ class ModernHeader(QWidget):
         # コンテンツ更新
         self._update_content()
         self._apply_styles()
+    
+    def _update_button_areas(self):
+        """左右のボタンエリアを更新"""
+        # 左ボタンエリアを更新
+        if hasattr(self, 'left_button_widget'):
+            # 既存の左ボタンエリアをクリア
+            left_button_layout = self.left_button_widget.layout()
+            while left_button_layout.count():
+                child = left_button_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+            
+            # EDITモードに戻るボタンを再作成
+            if self.current_mode == AppMode.MONITOR:
+                self.edit_return_btn = QPushButton("EDITモードに戻る")
+                self.edit_return_btn.setMinimumSize(120, 32)
+                self.edit_return_btn.clicked.connect(lambda: self.mode_changed.emit(AppMode.EDIT))
+                left_button_layout.addWidget(self.edit_return_btn)
+            else:
+                left_button_layout.addStretch()
+        
+        # 右ボタンエリア（アクションボタン）はすでに_create_action_buttonsで処理される
     
     def _clear_action_buttons(self):
         """アクションボタンをクリア"""
@@ -456,13 +563,37 @@ class AppFramework(QWidget):
     
     def set_main_content(self, content: QWidget):
         """メインコンテンツ設定"""
+        print(f"=== set_main_content called with {type(content).__name__} ===")
+        
         if self.main_content:
+            print(f"=== Removing existing main_content: {type(self.main_content).__name__} ===")
             self.main_content.setParent(None)
         
         self.main_content = content
-        layout = QVBoxLayout(self.content_container)
-        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 既存レイアウトをチェック（レイアウト再作成を回避）
+        existing_layout = self.content_container.layout()
+        if not existing_layout:
+            print("=== Creating new layout for content_container ===")
+            layout = QVBoxLayout(self.content_container)
+            layout.setContentsMargins(0, 0, 0, 0)
+        else:
+            print("=== Using existing layout, clearing widgets ===")
+            layout = existing_layout
+            # 既存ウィジェットのみクリア（レイアウトは保持）
+            while layout.count():
+                child = layout.takeAt(0)
+                if child.widget():
+                    child.widget().setParent(None)
+        
         layout.addWidget(content)
+        print(f"=== Main content set successfully: {type(content).__name__} ===")
+        print(f"=== Content container layout items: {layout.count()} ===")
+        
+        # コンテンツの表示状態を確認
+        print(f"=== Content visible: {content.isVisible()} ===")
+        print(f"=== Content enabled: {content.isEnabled()} ===")
+        print(f"=== Container visible: {self.content_container.isVisible()} ===")
     
     def _on_mode_changed(self, new_mode: AppMode):
         """モード変更イベント"""
@@ -474,3 +605,9 @@ class AppFramework(QWidget):
         """メニュー切替イベント"""
         if self.sidebar:
             self.sidebar.toggle_visibility()
+    
+    def set_sidebar_visible(self, visible: bool):
+        """サイドバーの表示/非表示を設定"""
+        if self.sidebar:
+            self.sidebar.setVisible(visible)
+            self.sidebar.expanded = visible
