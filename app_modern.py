@@ -55,7 +55,18 @@ class EditModernSidebar(ModernSidebar):
     
     def __init__(self, app_state: AppState, parent=None):
         super().__init__(app_state, width=300, parent=parent)
+        
+        # ファイル選択用
+        self.current_vehicle_file_path = None
+        self.default_vehicle_folder = r"C:\Users\table0\Desktop\Vehicles"
+        
+        # 設定データ保存
+        self.config_data = None
+        self.vehicle_data = None
+        
         self._setup_edit_content()
+        self._auto_load_config()
+        self._auto_show_vehicle_dialog()
     
     def _setup_edit_content(self):
         """EDIT専用コンテンツ設定"""
@@ -65,11 +76,24 @@ class EditModernSidebar(ModernSidebar):
         vehicle_group = QGroupBox("車両設定")
         vehicle_layout = QVBoxLayout()
         
-        load_vehicle_btn = QPushButton("Load Vehicle")
-        load_vehicle_btn.setStyleSheet(StyleBuilder.create_button_style(
+        # 車両ファイル情報表示
+        self.vehicle_info_label = QLabel("車両: 未読み込み")
+        self.vehicle_info_label.setStyleSheet(f"""
+            QLabel {{
+                color: {StyleBuilder.get_color('dark', 'on_surface_secondary')};
+                font-size: 12px;
+                padding: 5px;
+            }}
+        """)
+        vehicle_layout.addWidget(self.vehicle_info_label)
+        
+        # Load Vehicleボタン
+        self.load_vehicle_btn = QPushButton("Load Vehicle")
+        self.load_vehicle_btn.setStyleSheet(StyleBuilder.create_button_style(
             bg_color=StyleBuilder.get_color('secondary', 600)
         ))
-        vehicle_layout.addWidget(load_vehicle_btn)
+        self.load_vehicle_btn.clicked.connect(self._on_load_vehicle_clicked)
+        vehicle_layout.addWidget(self.load_vehicle_btn)
         
         vehicle_group.setLayout(vehicle_layout)
         self.content_layout.addWidget(vehicle_group)
@@ -78,15 +102,174 @@ class EditModernSidebar(ModernSidebar):
         image_group = QGroupBox("画像取得")
         image_layout = QVBoxLayout()
         
-        fetch_btn = QPushButton("RestAPIから画像取得")
-        fetch_btn.setStyleSheet(StyleBuilder.create_button_style())
-        image_layout.addWidget(fetch_btn)
+        # 画像取得ボタン
+        self.fetch_btn = QPushButton("RestAPIから画像取得")
+        self.fetch_btn.setStyleSheet(StyleBuilder.create_button_style())
+        self.fetch_btn.clicked.connect(self._on_fetch_image_clicked)
+        image_layout.addWidget(self.fetch_btn)
         
         image_group.setLayout(image_layout)
         self.content_layout.addWidget(image_group)
         
         # ストレッチ
         self.content_layout.addStretch()
+    
+    def _auto_load_config(self):
+        """config.jsonを自動読み込み"""
+        import os
+        import json
+        
+        config_paths = ["./data/config.json", "../data/config.json"]
+        
+        for config_path in config_paths:
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        self.config_data = json.load(f)
+                    
+                    print(f"EDIT mode: Auto-loaded config from {config_path}")
+                    return
+                    
+                except Exception as e:
+                    print(f"Auto-load config error from {config_path}: {e}")
+                    continue
+        
+        print("EDIT mode: No config.json found")
+        self.config_data = None
+    
+    def _auto_show_vehicle_dialog(self):
+        """EDITモード開始時にvehicle.jsonファイルダイアログを自動表示"""
+        def delayed_open():
+            import time
+            time.sleep(0.5)  # UI初期化完了を待つ
+            QTimer.singleShot(100, self._open_vehicle_file_dialog)
+        
+        import threading
+        threading.Thread(target=delayed_open, daemon=True).start()
+    
+    def _open_vehicle_file_dialog(self):
+        """vehicleファイルダイアログを開く"""
+        from PySide6.QtWidgets import QFileDialog
+        import os
+        
+        try:
+            print(f"Opening vehicle file dialog with default folder: {self.default_vehicle_folder}")
+            
+            # デフォルトフォルダが存在しない場合は作成を試行
+            if not os.path.exists(self.default_vehicle_folder):
+                try:
+                    os.makedirs(self.default_vehicle_folder, exist_ok=True)
+                    print(f"Created default folder: {self.default_vehicle_folder}")
+                except Exception as e:
+                    print(f"Could not create default folder: {e}")
+                    self.default_vehicle_folder = "."
+            
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select vehicle.json to start editing",
+                self.default_vehicle_folder,
+                "JSON files (*.json)"
+            )
+            
+            if file_path:
+                self._load_vehicle_file(file_path)
+            else:
+                print("No vehicle file selected")
+                
+        except Exception as e:
+            print(f"Error opening vehicle file dialog: {e}")
+    
+    def _load_vehicle_file(self, file_path: str):
+        """vehicle.jsonファイルを読み込み"""
+        try:
+            import json
+            print(f"Loading vehicle file: {file_path}")
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                self.vehicle_data = json.load(f)
+            
+            # ファイルパスを記憶
+            self.current_vehicle_file_path = file_path
+            
+            # 車両名をUIに反映
+            vehicle_name = self.vehicle_data.get("name", "Unknown")
+            self.vehicle_info_label.setText(f"車両: {vehicle_name}")
+            
+            print(f"Vehicle loaded successfully: {vehicle_name}")
+            
+            # RestAPIで画像を取得
+            self._fetch_full_image()
+            
+        except Exception as e:
+            print(f"Error loading vehicle file: {e}")
+            self.vehicle_info_label.setText("車両: 読み込みエラー")
+    
+    def _on_load_vehicle_clicked(self):
+        """Load Vehicleボタンクリック時の処理"""
+        self._open_vehicle_file_dialog()
+    
+    def _on_fetch_image_clicked(self):
+        """RestAPIから画像取得ボタンクリック時の処理"""
+        self._fetch_full_image()
+    
+    def _fetch_full_image(self):
+        """RestAPIでfull_imageを取得"""
+        if not self.config_data:
+            print("No config data available for RestAPI")
+            return
+        
+        restapi_config = self.config_data.get("RestAPI", {})
+        if not restapi_config.get("host") or not restapi_config.get("port"):
+            print("RestAPI config incomplete")
+            return
+        
+        def fetch_in_background():
+            try:
+                import requests
+                host = restapi_config.get("host")
+                port = restapi_config.get("port")
+                url = f"http://{host}:{port}/full_image"
+                
+                print(f"Fetching full_image from {url}")
+                
+                response = requests.get(url, timeout=10)
+                if response.status_code == 200:
+                    print("Full image loaded successfully from RestAPI")
+                    
+                    # EDITメインビューに画像を送信
+                    QTimer.singleShot(0, lambda: self._notify_image_loaded(response.content))
+                    
+                else:
+                    print(f"RestAPI error: {response.status_code}")
+                    
+            except Exception as e:
+                print(f"Error fetching full_image: {e}")
+        
+        # バックグラウンドで取得
+        import threading
+        threading.Thread(target=fetch_in_background, daemon=True).start()
+    
+    def _notify_image_loaded(self, image_data: bytes):
+        """画像読み込み完了をメインビューに通知"""
+        try:
+            # 親アプリケーションを取得してEDITメインビューにアクセス
+            if hasattr(self.app_state, 'main_application'):
+                main_app = self.app_state.main_application
+                if main_app and hasattr(main_app, 'mode_components'):
+                    from models.app_mode import AppMode
+                    edit_main_view = main_app.mode_components.get(AppMode.EDIT, {}).get('main_view')
+                    if edit_main_view and hasattr(edit_main_view, 'load_full_image'):
+                        edit_main_view.load_full_image(image_data)
+                        return
+            
+            print("Could not find EDIT main view to send image data")
+            
+        except Exception as e:
+            print(f"Error notifying image loaded: {e}")
+    
+    def set_main_application(self, main_app):
+        """メインアプリケーションの参照を設定"""
+        self.app_state.main_application = main_app
 
 
 class MonitorModernSidebar(ModernSidebar):
@@ -238,14 +421,114 @@ class ModernEditMainView(QWidget):
     def __init__(self, app_state: AppState, parent=None):
         super().__init__(parent)
         self.app_state = app_state
+        
+        # 画像表示関連
+        self.current_image = None
+        self.image_label = None
+        self.vehicle_data = None
+        
         self._setup_ui()
     
     def _setup_ui(self):
         """UI設定"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(0)
         
-        # 空のメイン画面
+        # 画像表示エリア
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setMinimumSize(800, 600)
+        self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.image_label.setScaledContents(False)
+        
+        # 初期プレースホルダー設定
+        self._set_placeholder_image()
+        
+        # フレーム・ボーダーを設定
+        self.image_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {DesignTokens.COLORS['dark']['surface_1']};
+                border: 2px solid {DesignTokens.COLORS['dark']['border']};
+                border-radius: 12px;
+                padding: 8px;
+            }}
+        """)
+        
+        layout.addWidget(self.image_label)
+    
+    def _set_placeholder_image(self):
+        """プレースホルダー画像を設定"""
+        try:
+            # 固定サイズでプレースホルダー画像を作成
+            placeholder = QPixmap(800, 600)
+            placeholder.fill(QColor('#2D2D30'))
+            
+            # 中央にテキストを描画
+            painter = QPainter(placeholder)
+            painter.setPen(QColor('#FFFFFF'))
+            painter.setFont(QFont("Segoe UI", 32, QFont.Weight.Bold))
+            painter.drawText(placeholder.rect(), Qt.AlignmentFlag.AlignCenter, "EDIT画面")
+            
+            # サブテキスト
+            painter.setFont(QFont("Segoe UI", 18))
+            painter.setPen(QColor('#B0B0B0'))
+            text_rect = placeholder.rect()
+            text_rect.setTop(text_rect.center().y() + 40)
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, "vehicle.json読み込み後\n画像が表示されます")
+            painter.end()
+            
+            # プレースホルダー画像を設定
+            self.image_label.setPixmap(placeholder)
+            self.image_label.setText("")
+            
+        except Exception as e:
+            print(f"Placeholder image creation error: {e}")
+            # フォールバック: テキストのみ表示
+            self.image_label.setText("EDIT画面\nvehicle.json読み込み後\n画像が表示されます")
+    
+    def load_vehicle_json(self, vehicle_data: dict):
+        """vehicle.jsonデータを読み込み"""
+        self.vehicle_data = vehicle_data
+        vehicle_name = vehicle_data.get("name", "Unknown")
+        print(f"EDIT main view: Vehicle data loaded for {vehicle_name}")
+    
+    def load_full_image(self, image_data: bytes):
+        """RestAPIから取得した画像を表示"""
+        try:
+            print(f"EDIT main view: Loading full image ({len(image_data)} bytes)")
+            
+            # バイナリデータをQPixmapに変換
+            pixmap = QPixmap()
+            if pixmap.loadFromData(image_data):
+                # 画像ラベルのサイズに合わせてスケーリング
+                label_geometry = self.image_label.geometry()
+                available_width = max(label_geometry.width() - 20, 200)
+                available_height = max(label_geometry.height() - 20, 150)
+                
+                if available_width > 100 and available_height > 100:
+                    scaled_pixmap = pixmap.scaled(
+                        available_width, available_height,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    self.image_label.setPixmap(scaled_pixmap)
+                else:
+                    # 固定サイズでスケーリング
+                    scaled_pixmap = pixmap.scaled(
+                        800, 600,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    self.image_label.setPixmap(scaled_pixmap)
+                
+                self.image_label.setText("")
+                print("EDIT main view: Full image displayed successfully")
+            else:
+                print("EDIT main view: Failed to load image from data")
+                
+        except Exception as e:
+            print(f"EDIT main view: Image loading error: {e}")
 
 
 class ModernMonitorMainView(QWidget):
@@ -485,6 +768,9 @@ class VehicleMonitorModernApplication(QMainWindow):
         
         # CONFIG起動時のファイルダイアログ自動表示（設定は空状態で開始）
         self._auto_show_config_dialog()
+        
+        # 初期化完了フラグ
+        self._initialized = True
     
     def _setup_application(self):
         """アプリケーション設定"""
@@ -507,7 +793,9 @@ class VehicleMonitorModernApplication(QMainWindow):
         self.mode_components[AppMode.CONFIG]['main_view'] = ModernConfigMainView(self.app_state)
         
         # EDIT 
-        self.mode_components[AppMode.EDIT]['sidebar'] = EditModernSidebar(self.app_state)
+        edit_sidebar = EditModernSidebar(self.app_state)
+        edit_sidebar.set_main_application(self)
+        self.mode_components[AppMode.EDIT]['sidebar'] = edit_sidebar
         self.mode_components[AppMode.EDIT]['main_view'] = ModernEditMainView(self.app_state)
         
         # MONITOR
@@ -534,7 +822,25 @@ class VehicleMonitorModernApplication(QMainWindow):
     
     def _switch_to_mode(self, new_mode: AppMode):
         """モード切替"""
-        print(f"Switching to {new_mode.value} mode")
+        old_mode = self.app_state.current_mode
+        print(f"*** _switch_to_mode called ***")
+        print(f"*** Target mode: {new_mode.value} ***")
+        print(f"*** Current app_state.current_mode: {old_mode.value} ***")
+        print(f"*** Header current_mode: {self.framework.header.current_mode.value} ***")
+        print(f"*** Are they equal? {old_mode == new_mode} ***")
+        
+        # 同じモードへの遷移は何もしない（初期化時を除く）
+        if old_mode == new_mode and hasattr(self, '_initialized'):
+            print(f"Already in {new_mode.value} mode, no action needed")
+            return
+        
+        # CONFIG→EDIT遷移時の特別処理
+        if old_mode == AppMode.CONFIG and new_mode == AppMode.EDIT:
+            print("CONFIG→EDIT transition detected, calling _handle_config_to_edit_transition")
+            if not self._handle_config_to_edit_transition():
+                print("CONFIG→EDIT transition cancelled")
+                return
+            print("CONFIG→EDIT transition completed successfully")
         
         # 状態更新
         self.app_state.current_mode = new_mode
@@ -560,13 +866,145 @@ class VehicleMonitorModernApplication(QMainWindow):
             self.app_state.sidebar_expanded = True
             self.framework.set_sidebar_visible(True)
             print("CONFIG mode: Sidebar set to expanded by default")
-        # EDITモードは既存の状態を維持
+        elif new_mode == AppMode.EDIT:
+            # EDITモードではサイドバーをデフォルトで表示
+            self.app_state.sidebar_expanded = True
+            self.framework.set_sidebar_visible(True)
+            print("EDIT mode: Sidebar set to expanded by default")
         
         # ヘッダー更新
         self.framework.header.update_mode(new_mode)
         
         print(f"Switched to {new_mode.value} mode successfully")
     
+    def _handle_config_to_edit_transition(self) -> bool:
+        """CONFIG→EDIT遷移時の特別処理"""
+        try:
+            print("=== CONFIG→EDIT遷移処理開始 ===")
+            
+            # 1. 遷移条件チェック
+            if not self._can_transition_to_edit():
+                print("遷移条件を満たしていません")
+                return False
+            
+            # 2. 現在の設定を取得
+            config_data = self._get_current_config_data()
+            if not config_data:
+                print("設定データが取得できませんでした")
+                return False
+            
+            # 3. 設定をファイルに保存
+            self._save_temp_config(config_data)
+            
+            # 4. MQTT設定送信
+            self._publish_config_to_mqtt(config_data)
+            
+            # 5. 500msec待機
+            import time
+            print("500msec待機中...")
+            time.sleep(0.5)
+            
+            print("=== CONFIG→EDIT遷移処理完了 ===")
+            return True
+            
+        except Exception as e:
+            print(f"CONFIG→EDIT遷移処理エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def _can_transition_to_edit(self) -> bool:
+        """EDIT遷移可能かチェック"""
+        # 設定データが存在するかチェック
+        config_data = self._get_current_config_data()
+        if not config_data:
+            print("設定データが存在しません")
+            return False
+        
+        # RestAPI接続状態をチェック（簡易実装：設定があれば OK とする）
+        restapi_config = config_data.get("RestAPI", {})
+        if not restapi_config.get("host") or not restapi_config.get("port"):
+            print("RestAPI設定が不完全です")
+            return False
+        
+        print("EDIT遷移条件を満たしています")
+        return True
+    
+    def _get_current_config_data(self) -> dict:
+        """現在の設定データを取得"""
+        try:
+            config_sidebar = self.mode_components[AppMode.CONFIG]['sidebar']
+            if hasattr(config_sidebar, 'get_config_sidebar'):
+                actual_sidebar = config_sidebar.get_config_sidebar()
+                if actual_sidebar and hasattr(actual_sidebar, 'get_current_config'):
+                    config_data = actual_sidebar.get_current_config()
+                    print(f"設定データ取得成功: {list(config_data.keys()) if config_data else 'None'}")
+                    return config_data
+            
+            print("設定データの取得に失敗しました")
+            return None
+            
+        except Exception as e:
+            print(f"設定データ取得エラー: {e}")
+            return None
+    
+    def _save_temp_config(self, config_data: dict):
+        """設定を一時ファイルに保存"""
+        try:
+            import os
+            import json
+            
+            # ./data ディレクトリを作成
+            os.makedirs("./data", exist_ok=True)
+            
+            # config.json に保存
+            config_path = "./data/config.json"
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, indent=2, ensure_ascii=False)
+            
+            print(f"設定を保存しました: {config_path}")
+            
+        except Exception as e:
+            print(f"設定保存エラー: {e}")
+            raise
+    
+    def _publish_config_to_mqtt(self, config_data: dict):
+        """MQTT 'config' トピックに設定を送信"""
+        try:
+            print(f"=== _publish_config_to_mqtt called ===")
+            print(f"MQTT service available: {self.mqtt_service is not None}")
+            
+            if not self.mqtt_service or not hasattr(self.mqtt_service, 'is_connected'):
+                print("MQTTサービスが利用できません")
+                return
+            
+            print(f"MQTT connected: {self.mqtt_service.is_connected()}")
+            if not self.mqtt_service.is_connected():
+                print("MQTT接続が確立されていません")
+                return
+            
+            # JSON文字列に変換
+            import json
+            config_json = json.dumps(config_data, ensure_ascii=False, separators=(',', ':'))
+            print(f"Config JSON prepared: {len(config_json)} chars")
+            print(f"Config JSON preview: {config_json[:200]}...")
+            
+            # 'config' トピックに送信
+            print("Calling mqtt_service.publish...")
+            success = self.mqtt_service.publish("config", config_json, qos=1, retain=True)
+            
+            print(f"Publish result: {success}")
+            if success:
+                print("MQTT 'config' トピックに設定を送信しました")
+            else:
+                print("MQTT設定送信に失敗しました")
+                
+        except Exception as e:
+            print(f"MQTT設定送信エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            # エラーでも処理は続行する
+
     def _update_status(self):
         """ステータス情報更新"""
         # FPS更新（シミュレーション）

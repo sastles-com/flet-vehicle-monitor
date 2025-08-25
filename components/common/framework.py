@@ -264,7 +264,7 @@ class ModernHeader(QWidget):
     def update_mode(self, new_mode: AppMode):
         """モード更新"""
         self.current_mode = new_mode
-        self.app_state.current_mode = new_mode
+        # IMPORTANT: app_state.current_modeは_switch_to_modeで更新するため、ここでは更新しない
         
         # 左右のボタンエリアを再構築
         self._update_button_areas()
@@ -526,7 +526,7 @@ class AppFramework(QWidget):
         
         # ヘッダー
         self.header = ModernHeader(self.app_state)
-        self.header.mode_changed.connect(self._on_mode_changed)
+        # mode_changed接続はModernApplicationで行うため、ここでは接続しない
         self.header.menu_toggled.connect(self._on_menu_toggled)
         main_layout.addWidget(self.header)
         
@@ -597,7 +597,7 @@ class AppFramework(QWidget):
     
     def _on_mode_changed(self, new_mode: AppMode):
         """モード変更イベント"""
-        self.app_state.current_mode = new_mode
+        # IMPORTANT: app_state.current_modeは_switch_to_modeで更新するため、ここでは更新しない
         self.header.update_mode(new_mode)
         # TODO: サイドバーとメインコンテンツの更新
     

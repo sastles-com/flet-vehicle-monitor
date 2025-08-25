@@ -30,7 +30,7 @@ class MQTTService(QObject):
         super().__init__()
         self.client: Optional[mqtt.Client] = None
         self.config: Optional[Dict[str, Any]] = None
-        self.is_connected = False
+        self._is_connected = False
         
         # サブスクリプション管理
         self.subscribed_topics = set()
@@ -77,7 +77,7 @@ class MQTTService(QObject):
                 
             except Exception as e:
                 print(f"MQTT connection error: {e}")
-                self.is_connected = False
+                self._is_connected = False
                 self.connected.emit(False)
         
         # バックグラウンドで接続
@@ -89,7 +89,7 @@ class MQTTService(QObject):
         if self.client:
             self.client.disconnect()
             self.client = None
-        self.is_connected = False
+        self._is_connected = False
     
     def subscribe_image_topic(self) -> bool:
         """画像トピックを購読"""
@@ -97,7 +97,7 @@ class MQTTService(QObject):
     
     def subscribe(self, topic: str) -> bool:
         """トピックを購読"""
-        if not self.client or not self.is_connected:
+        if not self.client or not self._is_connected:
             print(f"MQTT not connected - cannot subscribe to '{topic}'")
             return False
             
@@ -114,7 +114,7 @@ class MQTTService(QObject):
         """MQTT接続成功時のコールバック"""
         if rc == 0:
             print("MQTT connected successfully")
-            self.is_connected = True
+            self._is_connected = True
             self.connected.emit(True)
             
             # 画像トピックを自動購読
@@ -127,52 +127,37 @@ class MQTTService(QObject):
                 self.subscribe("#")  # すべてのトピック
         else:
             print(f"MQTT connection failed with code {rc}")
-            self.is_connected = False
+            self._is_connected = False
             self.connected.emit(False)
     
     def _on_message(self, client, userdata, msg):
         """MQTT メッセージ受信時のコールバック"""
         try:
-            print(f"*** MQTT message received on topic: '{msg.topic}' ***")
-            print(f"*** Message payload size: {len(msg.payload)} bytes ***")
+            # image以外のトピックのメッセージを重点的にログ表示
+            if msg.topic != "image":
+                print(f"*** MQTT message received on topic: '{msg.topic}' ***")
+                print(f"*** Message payload size: {len(msg.payload)} bytes ***")
+                try:
+                    preview = msg.payload.decode('utf-8', errors='ignore')[:200]
+                    print(f"*** Message content: {preview} ***")
+                except:
+                    print(f"*** Binary message, size: {len(msg.payload)} bytes ***")
             
             if msg.topic == "image":
-                print("*** Processing 'image' topic message... ***")
-                
+                # imageトピックは最小限のログに変更
                 try:
-                    # デバッグ: 生のペイロードの最初の部分を表示
-                    raw_payload = msg.payload.decode('utf-8', errors='ignore')
-                    print(f"*** Raw payload preview (first 200 chars): {raw_payload[:200]} ***")
-                    
                     # Raspberry Piから送信されるJSON形式のメッセージを処理
                     message_data = json.loads(msg.payload.decode())
-                    print(f"*** JSON parsed successfully ***")
-                    print(f"*** JSON keys: {list(message_data.keys())} ***")
                     
                     if "image" in message_data and message_data["image"]:
                         image_data = message_data["image"]
-                        print(f"*** Image data length: {len(image_data)} characters ***")
-                        print(f"*** Image data starts with: {image_data[:50]}... ***")
-                        
-                        # 画像データをシグナルで送信
+                        # 画像データをシグナルで送信（ログ出力は最小限）
                         self.image_received.emit(image_data)
-                        print("*** Image data emitted via signal ***")
                     else:
-                        print("*** CRITICAL: Invalid image message format - no 'image' key found or empty data ***")
-                        print(f"*** Message content: {message_data} ***")
+                        print(f"*** CRITICAL: Invalid image message format ***")
                         
                 except json.JSONDecodeError as e:
-                    print(f"*** JSON decode error: {e} ***")
-                    print(f"*** Raw payload: {msg.payload[:500]} ***")
-                    
-            else:
-                print(f"*** Non-image topic message: {msg.topic} ***")
-                # 他のトピックの場合も内容を少し表示
-                try:
-                    preview = msg.payload.decode('utf-8', errors='ignore')[:100]
-                    print(f"*** Message preview: {preview} ***")
-                except:
-                    print(f"*** Binary message, size: {len(msg.payload)} bytes ***")
+                    print(f"*** Image topic JSON decode error: {e} ***")
                     
         except Exception as e:
             print(f"*** MQTT message processing error: {e} ***")
@@ -182,14 +167,39 @@ class MQTTService(QObject):
     def _on_disconnect(self, client, userdata, rc):
         """MQTT切断時のコールバック"""
         print(f"MQTT disconnected with code {rc}")
-        self.is_connected = False
+        self._is_connected = False
         self.disconnected.emit()
-    
-    def get_connection_status(self) -> bool:
-        """接続状態を確認"""
-        return self.is_connected
     
     def set_mode(self, mode: str):
         """動作モードを設定"""
         self.current_mode = mode
         print(f"MQTT service mode set to: {mode}")
+    
+    def is_connected(self) -> bool:
+        """接続状態を確認（統一インターフェース）"""
+        return self._is_connected
+    
+    def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False) -> bool:
+        """MQTTメッセージを送信"""
+        try:
+            if not self.client or not self._is_connected:
+                print(f"*** MQTT not connected - cannot publish to {topic} ***")
+                return False
+            
+            print(f"*** Attempting to publish to topic '{topic}' ***")
+            print(f"*** Payload preview: {payload[:200]}... ***")
+            
+            result = self.client.publish(topic, payload, qos=qos, retain=retain)
+            
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                print(f"*** Successfully published to '{topic}' (QoS: {qos}, Retain: {retain}): {len(payload)} chars ***")
+                return True
+            else:
+                print(f"*** Failed to publish to '{topic}': {mqtt.error_string(result.rc)} ***")
+                return False
+                
+        except Exception as e:
+            print(f"*** Error publishing to MQTT topic '{topic}': {e} ***")
+            import traceback
+            traceback.print_exc()
+            return False
