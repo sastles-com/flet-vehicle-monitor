@@ -16,7 +16,16 @@
       "Bash(cp:*)",
       "Bash(python:*)",
       "Bash(pip install:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Read(/C:\\Users\\table0\\react-projects\\vehicle-monitoring-app/**)",
+      "Read(/C:\\Users\\table0\\react-projects\\vehicle-monitoring-app/**)",
+      "Read(/C:\\Users\\table0\\vehicle_monitor/**)",
+      "Read(/C:\\Users\\table0\\vehicle_monitor\\src/**)",
+      "Read(/C:\\Users\\table0\\vehicle_monitor\\src\\models/**)",
+      "Read(/C:\\Users\\table0\\vehicle_monitor/**)",
+      "Bash(call venvScriptsactivate.bat)",
+      "Bash(venvScriptsactivate.bat)",
+      "Bash(set PYTHONIOENCODING=utf-8)"
     ],
     "deny": []
   }

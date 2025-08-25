@@ -126,7 +126,7 @@ class TestDataManagement(unittest.TestCase):
     """データ管理クラスのテスト"""
     
     def test_config_data_structure(self):
-        """ConfigDataクラス構造テスト"""
+        """ConfigData class structure test"""
         # 期待されるフィールド
         expected_fields = [
             'mqtt_host', 'mqtt_port', 'mqtt_ws_port',

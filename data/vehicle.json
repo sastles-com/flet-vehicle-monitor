@@ -179,7 +179,7 @@
       "name": "extra",
       "path": "/ros2_ws/src/camera_system/templates/textra.png",
       "type": "float",
-      "shape": "circle",
+      "shape": "bar",
       "center": {
         "x": 2228.2555720653786,
         "y": 30.70430906389306

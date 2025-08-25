@@ -50,6 +50,11 @@ python main.py --no-dialog
 - 実装中はテストを変更せず、コードを修正し続ける
 - すべてのテストが通過するまで繰り返す
 
+### Implementation Policy
+- **実装許可制**: 実装に入る際は必ずユーザーに許可を受けること
+- **クラス単位テスト**: ユニットテストは基本的にクラスを単位として設計・実装する
+- **t_wadaのTDD開発ポリシー**: 厳格なTDDサイクルに従う
+
 ### Code Style Guidelines
 - Use type hints for all function parameters and return values
 - Follow PEP 8 style guide (enforced by flake8)
