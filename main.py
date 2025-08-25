@@ -296,9 +296,12 @@ class ResizableGraphicsItem:
         rect = item.boundingRect()
         pos = item.pos()
         
-        # 重心位置を計算
+        # 重心位置を計算（barのみ50ピクセル上に移動）
         center_x = pos.x() + rect.center().x()
-        center_y = pos.y() + rect.center().y()
+        if hasattr(self, 'shape_type') and self.shape_type == ShapeType.BAR:
+            center_y = pos.y() + rect.center().y() - 50  # barのみオフセット
+        else:
+            center_y = pos.y() + rect.center().y()  # 他のパーツは重心位置
         
         # 制御点（選択状態に応じてサイズと色を変更）を作成
         if self.is_selected:
@@ -1031,50 +1034,69 @@ class CircumferencePointItem(QGraphicsEllipseItem):
         
         # バーの向きに応じて制約
         if self.parent_ellipse.orientation == "horizontal":
-            # 横長：縦分割線上に制約（x座標は固定、y座標のみ変更可能）
-            display_x = pos.x() + rect.width() / 2  # 分割線のx座標
-            # y座標をマウス位置に基づいて計算（矩形内に制約）
-            relative_y = max(0, min(1, (mouse_pos.y() - pos.y()) / rect.height()))
-            display_y = pos.y() + rect.height() * relative_y
-        else:
-            # 縦長：横分割線上に制約（y座標は固定、x座標のみ変更可能）
+            # 横長：横分割線上に制約（y座標は固定、x座標のみ変更可能）
             display_y = pos.y() + rect.height() / 2  # 分割線のy座標
             # x座標をマウス位置に基づいて計算（矩形内に制約）
             relative_x = max(0, min(1, (mouse_pos.x() - pos.x()) / rect.width()))
             display_x = pos.x() + rect.width() * relative_x
+        else:
+            # 縦長：縦分割線上に制約（x座標は固定、y座標のみ変更可能）
+            display_x = pos.x() + rect.width() / 2  # 分割線のx座標
+            # y座標をマウス位置に基づいて計算（矩形内に制約）
+            relative_y = max(0, min(1, (mouse_pos.y() - pos.y()) / rect.height()))
+            display_y = pos.y() + rect.height() * relative_y
         
         # value順序制約を適用
         sorted_points = sorted(self.parent_ellipse.circumference_points, key=lambda p: p.value)
         current_index = next((i for i, p in enumerate(sorted_points) if p == self.point_data), -1)
         
-        # 相対位置からvalueを計算
-        if self.parent_ellipse.orientation == "horizontal":
-            target_value = (display_y - pos.y()) / rect.height()
-        else:
-            target_value = (display_x - pos.x()) / rect.width()
-        
-        # value制約を適用
+        # 順序制約を適用（value順序に基づく位置制約）
         if current_index >= 0:
-            min_value = 0.0
-            max_value = 1.0
-            margin = 0.01  # 1%マージン
-            
-            # 前のポイント制約
-            if current_index > 0:
-                min_value = sorted_points[current_index - 1].value + margin
-            
-            # 次のポイント制約
-            if current_index < len(sorted_points) - 1:
-                max_value = sorted_points[current_index + 1].value - margin
-            
-            # target_valueを制約範囲内に収める
-            target_value = max(min_value, min(max_value, target_value))
+            # 前のポイント（小さいvalue）と次のポイント（大きいvalue）の位置を取得
+            if self.parent_ellipse.orientation == "horizontal":
+                # 横長の場合：x座標で制約
+                min_x = pos.x()
+                max_x = pos.x() + rect.width()
+                
+                if current_index > 0:
+                    # 前のポイントのx座標より右でなければならない
+                    prev_point = sorted_points[current_index - 1]
+                    if hasattr(prev_point, 'position') and prev_point.position:
+                        min_x = prev_point.position.x * self.parent_ellipse.scene_scale + 5  # 5px余裕
+                
+                if current_index < len(sorted_points) - 1:
+                    # 次のポイントのx座標より左でなければならない
+                    next_point = sorted_points[current_index + 1]
+                    if hasattr(next_point, 'position') and next_point.position:
+                        max_x = next_point.position.x * self.parent_ellipse.scene_scale - 5  # 5px余裕
+                
+                # x座標を制約
+                display_x = max(min_x, min(max_x, display_x))
+            else:
+                # 縦長の場合：y座標で制約（value順序と逆：小さいvalueが下）
+                min_y = pos.y()
+                max_y = pos.y() + rect.height()
+                
+                if current_index > 0:
+                    # 前のポイント（小さいvalue）のy座標より上でなければならない
+                    prev_point = sorted_points[current_index - 1]
+                    if hasattr(prev_point, 'position') and prev_point.position:
+                        max_y = prev_point.position.y * self.parent_ellipse.scene_scale - 5  # 5px余裕
+                
+                if current_index < len(sorted_points) - 1:
+                    # 次のポイント（大きいvalue）のy座標より下でなければならない
+                    next_point = sorted_points[current_index + 1]
+                    if hasattr(next_point, 'position') and next_point.position:
+                        min_y = next_point.position.y * self.parent_ellipse.scene_scale + 5  # 5px余裕
+                
+                # y座標を制約
+                display_y = max(min_y, min(max_y, display_y))
         
-        # 制約されたvalueから最終位置を再計算
-        if self.parent_ellipse.orientation == "horizontal":
-            display_y = pos.y() + rect.height() * target_value
-        else:
-            display_x = pos.x() + rect.width() * target_value
+        # valueは変更しない（vehicle.jsonの固定値を維持）
+        # self.point_data.value = target_value  # コメントアウト
+        
+        # 最終位置はドラッグ位置をそのまま使用（分割線制約は既に適用済み）
+        # target_valueは使用しない
         
         # ポイントマーカーの位置を更新
         marker_size = 32
@@ -1096,10 +1118,13 @@ class CircumferencePointItem(QGraphicsEllipseItem):
         except (ValueError, IndexError):
             pass
         
-        # 元座標系での位置を更新
+        # 元座標系での位置を更新（マーカーの中心座標を使用）
         scale = self.parent_ellipse.scene_scale
-        self.point_data.position.x = display_x / scale
-        self.point_data.position.y = display_y / scale
+        # setPos()で設定した座標にマーカーサイズの半分を加えて、実際の中心座標を取得
+        actual_center_x = display_x
+        actual_center_y = display_y
+        self.point_data.position.x = actual_center_x / scale
+        self.point_data.position.y = actual_center_y / scale
         
         event.accept()
         
@@ -1108,35 +1133,62 @@ class CircumferencePointItem(QGraphicsEllipseItem):
             self.is_dragging = False
             self.parent_ellipse.circumference_dragging = False
             
-            # ドラッグ完了後、現在の位置から新しい角度を計算して保存
-            rect = self.parent_ellipse.ellipse_item.boundingRect()
-            pos = self.parent_ellipse.ellipse_item.pos()
-            center_x = pos.x() + rect.width() / 2
-            center_y = pos.y() + rect.height() / 2
+            # 親の図形タイプを判定
+            if hasattr(self.parent_ellipse, 'shape_type') and self.parent_ellipse.shape_type == ShapeType.BAR:
+                # バー形状の場合：相対位置を再計算して保存
+                marker_pos = self.pos()
+                marker_center_x = marker_pos.x() + 16  # marker_size/2
+                marker_center_y = marker_pos.y() + 16
+                scale = self.parent_ellipse.scene_scale
+                
+                # ドラッグ後の座標を更新
+                self.point_data.position.x = marker_center_x / scale
+                self.point_data.position.y = marker_center_y / scale
+                
+                # 相対位置を再計算（次回の表示で正しく配置されるように）
+                rect = self.parent_ellipse.rect_item.boundingRect()
+                pos = self.parent_ellipse.rect_item.pos()
+                current_center_x = pos.x() + rect.width() / 2
+                current_center_y = pos.y() + rect.height() / 2
+                current_radius = max(rect.width(), rect.height()) / 2
+                
+                rel_x = marker_center_x - current_center_x
+                rel_y = marker_center_y - current_center_y
+                
+                if self.parent_ellipse.orientation == "horizontal":
+                    self.point_data._calculated_relative_pos = (marker_center_x - pos.x()) / rect.width()
+                else:
+                    self.point_data._calculated_relative_pos = (marker_center_y - pos.y()) / rect.height()
+            else:
+                # 円形の場合：角度計算
+                rect = self.parent_ellipse.ellipse_item.boundingRect()
+                pos = self.parent_ellipse.ellipse_item.pos()
+                center_x = pos.x() + rect.width() / 2
+                center_y = pos.y() + rect.height() / 2
+                
+                # マーカーの中心位置を取得
+                marker_pos = self.pos()
+                marker_center_x = marker_pos.x() + 16  # marker_size/2
+                marker_center_y = marker_pos.y() + 16
+                
+                # 円の中心からマーカーの中心への角度を計算
+                dx = marker_center_x - center_x
+                dy = marker_center_y - center_y
+                
+                import math
+                new_angle = math.atan2(dy, dx)
+                
+                # 正規化された角度を保存（次回の表示更新で使用される）
+                self.point_data._calculated_angle = new_angle
+                
+                # 累積角度もリセット（ドラッグ完了時）
+                if hasattr(self.point_data, '_accumulated_angle'):
+                    delattr(self.point_data, '_accumulated_angle')
+                if hasattr(self.point_data, '_last_angle'):
+                    delattr(self.point_data, '_last_angle')
             
-            # マーカーの中心位置を取得
-            marker_pos = self.pos()
-            marker_center_x = marker_pos.x() + 16  # marker_size/2
-            marker_center_y = marker_pos.y() + 16
-            
-            # 円の中心からマーカーの中心への角度を計算
-            dx = marker_center_x - center_x
-            dy = marker_center_y - center_y
-            
-            import math
-            new_angle = math.atan2(dy, dx)
-            
-            # 正規化された角度を保存（次回の表示更新で使用される）
-            self.point_data._calculated_angle = new_angle
-            
-            # 累積角度もリセット（ドラッグ完了時）
-            if hasattr(self.point_data, '_accumulated_angle'):
-                delattr(self.point_data, '_accumulated_angle')
-            if hasattr(self.point_data, '_last_angle'):
-                delattr(self.point_data, '_last_angle')
-            
-            # ドラッグ完了時にcircumferenceポイントを再描画
-            self.parent_ellipse.update_circumference_display()
+            # ドラッグ完了後は再描画不要（既に正しい位置にある）
+            # self.parent_ellipse.update_circumference_display()
             
             event.accept()
 
@@ -1571,8 +1623,9 @@ class ResizableEllipseItem(ResizableGraphicsItem):
     def set_selected(self, selected: bool):
         """選択状態を設定し、表示を更新（circumferenceポイントも含む）"""
         super().set_selected(selected)
-        # circumferenceポイントの表示も更新
-        self.update_circumference_display()
+        # circumferenceポイントの表示も更新（ドラッグ中でない場合のみ）
+        if not (hasattr(self, 'circumference_dragging') and self.circumference_dragging):
+            self.update_circumference_display()
     
     def get_item(self) -> QGraphicsEllipseItem:
         return self.ellipse_item
@@ -1659,6 +1712,11 @@ class BarShapeItem(ResizableGraphicsItem):
         self.circumference_points = circumference_points or []
         self.circumference_items = []  # 表示用のグラフィックアイテム
         self.circumference_dragging = False  # ドラッグ中フラグ
+        
+        # 初期の中心・サイズを保存（相対位置計算用）
+        self.original_center_x = display_x + display_width / 2
+        self.original_center_y = display_y + display_height / 2
+        self.original_radius = max(display_width, display_height) / 2
         
         # バー形状を作成（矩形 + 分割線）
         self.create_bar_shape(display_width, display_height)
@@ -1760,58 +1818,114 @@ class BarShapeItem(ResizableGraphicsItem):
         
         # 各circumferenceポイントを分割線上に配置
         for i, point in enumerate(sorted_points):
-            # vehicle.jsonのposition座標がある場合、それを優先的に使用（初期化時）
-            if hasattr(point, 'position') and point.position and not hasattr(point, '_bar_calculated_position'):
-                # 初期設定時：vehicle.jsonの座標をそのまま使用してスケーリング
-                display_x = point.position.x * self.scene_scale
-                display_y = point.position.y * self.scene_scale
-                point._bar_calculated_position = True  # 計算済みフラグ
-            else:
-                # valueに基づいて分割線上の位置を計算
+            # vehicle.jsonのposition座標がある場合、それから相対位置を計算して保存
+            if hasattr(point, 'position') and point.position:
+                # 初期設定時のみ：vehicle.jsonの座標から相対位置を計算して保存
+                if not hasattr(point, '_calculated_relative_pos'):
+                    # vehicle.jsonで定義された元のバーの中心・サイズを取得
+                    original_center_x = self.original_center_x if hasattr(self, 'original_center_x') else pos.x() + rect.width() / 2
+                    original_center_y = self.original_center_y if hasattr(self, 'original_center_y') else pos.y() + rect.height() / 2
+                    original_radius = self.original_radius if hasattr(self, 'original_radius') else max(rect.width(), rect.height()) / 2
+                    
+                    # スケール調整された座標を取得
+                    scaled_x = point.position.x * self.scene_scale
+                    scaled_y = point.position.y * self.scene_scale
+                    
+                    # 元の中心からの相対位置を計算
+                    rel_x = scaled_x - original_center_x
+                    rel_y = scaled_y - original_center_y
+                    
+                    # バーの向きに応じて相対位置を正規化（0～1の範囲）
+                    if self.orientation == "horizontal":
+                        # 横長：x方向の相対位置を0～1で正規化
+                        original_width = original_radius * 2
+                        calculated_relative_0_1 = (scaled_x - (original_center_x - original_width/2)) / original_width
+                        # 分割線上にない場合（バー矩形外）は、value値に基づいて初期配置
+                        if calculated_relative_0_1 < 0.0 or calculated_relative_0_1 > 1.0:
+                            point._calculated_relative_pos = point.value
+                        else:
+                            point._calculated_relative_pos = calculated_relative_0_1
+                    else:
+                        # 縦長：y方向の相対位置を0～1で正規化
+                        original_height = original_radius * 2
+                        calculated_relative_0_1 = (scaled_y - (original_center_y - original_height/2)) / original_height
+                        # 分割線上にない場合（バー矩形外）は、value値に基づいて初期配置
+                        if calculated_relative_0_1 < 0.0 or calculated_relative_0_1 > 1.0:
+                            point._calculated_relative_pos = point.value
+                        else:
+                            point._calculated_relative_pos = calculated_relative_0_1
+                
+                # 計算された相対位置を使用して現在の分割線上に配置
+                current_center_x = pos.x() + rect.width() / 2
+                current_center_y = pos.y() + rect.height() / 2
+                current_radius = max(rect.width(), rect.height()) / 2
+                
                 if self.orientation == "horizontal":
-                    # 横長：縦分割線上にポイントを配置
-                    display_x = pos.x() + rect.width() / 2  # 分割線のx座標
-                    display_y = pos.y() + rect.height() * point.value  # value=0で上端、value=1で下端
+                    # 横長：分割線は水平、y座標は中央固定
+                    display_x = pos.x() + point._calculated_relative_pos * rect.width()
+                    display_y = current_center_y  # 分割線上（水平中央）
                 else:
-                    # 縦長：横分割線上にポイントを配置
-                    display_x = pos.x() + rect.width() * point.value  # value=0で左端、value=1で右端
-                    display_y = pos.y() + rect.height() / 2  # 分割線のy座標
+                    # 縦長：分割線は垂直、x座標は中央固定
+                    display_x = current_center_x  # 分割線上（垂直中央）
+                    display_y = pos.y() + point._calculated_relative_pos * rect.height()
+            else:
+                # position座標がない場合：value値に基づいて分割線上に初期配置
+                current_center_x = pos.x() + rect.width() / 2
+                current_center_y = pos.y() + rect.height() / 2
+                
+                # value値（0.0～1.0）をそのまま使用（handle_bar_dragと一致）
+                if self.orientation == "horizontal":
+                    display_x = pos.x() + point.value * rect.width()
+                    display_y = current_center_y
+                else:
+                    display_x = current_center_x
+                    display_y = pos.y() + point.value * rect.height()
             
             if DEBUG_MODE:
                 print(f"[DEBUG] Bar Point {i}: value={point.value:.3f}, pos=({display_x:.2f}, {display_y:.2f})")
+                print(f"[DEBUG] Bar rect: pos=({pos.x():.2f}, {pos.y():.2f}), size=({rect.width():.2f}, {rect.height():.2f})")
+                if self.orientation == "horizontal":
+                    expected_y = pos.y() + rect.height() / 2
+                    print(f"[DEBUG] Expected y for horizontal bar: {expected_y:.2f}, actual display_y: {display_y:.2f}")
+                else:
+                    expected_x = pos.x() + rect.width() / 2  
+                    print(f"[DEBUG] Expected x for vertical bar: {expected_x:.2f}, actual display_x: {display_x:.2f}")
+            
+            # テキストの位置を分割線上に配置
+            text_x = display_x
+            text_y = display_y
             
             # ポイントマーカー（大きな円）
             marker_size = 32
+            # 制御点をテキストと全く同じ位置に配置
             point_marker = CircumferencePointItem(
-                display_x - marker_size/2,
-                display_y - marker_size/2,
+                0,  # boundingRectのx座標（相対位置）
+                0,  # boundingRectのy座標（相対位置）
                 marker_size,
                 marker_size,
                 self,
                 point,
                 i
             )
+            # 実際の位置をsetPosで設定
+            point_marker.setPos(text_x - marker_size/2, text_y - marker_size/2)
             point_marker.setBrush(QBrush(QColor(255, 128, 0)))  # オレンジ色
             point_marker.setPen(QPen(QColor(0, 0, 0), 2))
             point_marker.setZValue(1500)  # ハンドルより前面
             point_marker.setFlag(QGraphicsItem.ItemIsMovable, True)
             point_marker.setAcceptHoverEvents(True)
             
+            if DEBUG_MODE:
+                marker_pos = point_marker.pos()
+                marker_center_x = marker_pos.x() + marker_size/2
+                marker_center_y = marker_pos.y() + marker_size/2
+                print(f"[DEBUG] Marker created at: pos=({marker_pos.x():.2f}, {marker_pos.y():.2f}), center=({marker_center_x:.2f}, {marker_center_y:.2f})")
+                print(f"[DEBUG] Text will be created at: ({text_x:.2f}, {text_y:.2f})")
+            
             # 値を表示するテキスト（大きく）
             from PySide6.QtWidgets import QGraphicsTextItem
             from PySide6.QtGui import QFont
             value_text = QGraphicsTextItem(f"{point.value:.2f}")
-            
-            # テキストの位置を分割線の外側に配置
-            text_offset = 30
-            if self.orientation == "horizontal":
-                # 横長：テキストを右に配置
-                text_x = display_x + text_offset
-                text_y = display_y - 15
-            else:
-                # 縦長：テキストを下に配置
-                text_x = display_x - 15
-                text_y = display_y + text_offset
             
             value_text.setPos(text_x, text_y)
             font = QFont("Arial", 16, QFont.Bold)
