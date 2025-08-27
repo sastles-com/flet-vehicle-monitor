@@ -2438,108 +2438,195 @@ class VehicleMonitorEditor(QMainWindow):
         self.create_footer(main_layout)
     
     def create_header(self, main_layout):
-        """ヘッダー作成"""
+        """ヘッダー作成（統一レイアウト：左右2セクション）"""
         header_widget = QWidget()
-        header_widget.setFixedHeight(60)
+        header_widget.setFixedHeight(80)
         header_widget.setStyleSheet("""
             QWidget {
                 background-color: #2c3e50;
-                border-bottom: 2px solid #34495e;
+                border-bottom: 3px solid #34495e;
             }
         """)
         header_layout = QHBoxLayout(header_widget)
         header_layout.setContentsMargins(20, 10, 20, 10)
+        header_layout.setSpacing(30)  # セクション間の間隔
         
-        # メインタイトル
-        title_label = QLabel("Vehicle Monitor")
-        title_label.setStyleSheet("""
-            QLabel {
+        # ===== 左セクション =====
+        left_section = QWidget()
+        left_layout = QHBoxLayout(left_section)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(15)
+        
+        # サイドバー開閉ボタン
+        self.sidebar_btn = QPushButton("≡")
+        self.sidebar_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #34495e;
                 color: white;
-                font-size: 18px;
+                border: 2px solid #4a6741;
+                padding: 10px 15px;
+                border-radius: 6px;
+                font-size: 20px;
                 font-weight: bold;
+                min-width: 50px;
+                min-height: 45px;
+                max-height: 45px;
+            }
+            QPushButton:hover {
+                background-color: #4a6741;
             }
         """)
-        header_layout.addWidget(title_label)
+        self.sidebar_btn.clicked.connect(self.toggle_sidebar)
+        left_layout.addWidget(self.sidebar_btn)
         
-        # モード表示
+        # モード表示インジケータ
         self.mode_labels = {}
+        mode_icons = {"CONFIG": "⚙️", "EDIT": "✏️", "MONITOR": "📊"}
         for mode in AppMode:
-            mode_label = QLabel(mode.value)
+            icon = mode_icons.get(mode.value, "")
+            mode_label = QLabel(f"{icon} {mode.value}")
             mode_label.setStyleSheet("""
                 QLabel {
                     color: #bdc3c7;
                     font-size: 14px;
-                    padding: 5px 10px;
-                    margin: 0 5px;
-                    border-radius: 3px;
+                    font-weight: bold;
+                    padding: 6px 12px;
+                    margin: 0 3px;
+                    border-radius: 4px;
+                    background-color: rgba(255,255,255,0.1);
                 }
             """)
             self.mode_labels[mode] = mode_label
-            header_layout.addWidget(mode_label)
+            left_layout.addWidget(mode_label)
         
-        header_layout.addStretch()
+        left_layout.addStretch()
+        header_layout.addWidget(left_section, 1)
         
-        # ナビゲーションボタン
-        prev_btn = QPushButton("< 戻る")
+        # ===== 右セクション =====
+        right_section = QWidget()
+        right_layout = QHBoxLayout(right_section)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(15)
+        
+        # 戻るボタン
+        prev_btn = QPushButton("◀ 戻る")
         prev_btn.setStyleSheet("""
             QPushButton {
                 background-color: #3498db;
                 color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
+                border: 2px solid #2980b9;
+                padding: 8px 15px;
+                border-radius: 6px;
                 font-size: 12px;
+                font-weight: bold;
+                min-width: 65px;
+                max-width: 65px;
+                min-height: 35px;
+                max-height: 35px;
             }
             QPushButton:hover {
                 background-color: #2980b9;
+                border-color: #21618c;
+            }
+            QPushButton:pressed {
+                background-color: #21618c;
             }
         """)
         prev_btn.clicked.connect(self.previous_mode)
+        right_layout.addWidget(prev_btn)
         
-        next_btn = QPushButton("進む >")
+        # 中央タイトル（車種情報）
+        self.title_label = QLabel("🚗 XTRAIL")
+        self.title_label.setStyleSheet("""
+            QLabel {
+                color: white;
+                font-size: 24px;
+                font-weight: bold;
+                padding: 0 20px;
+                background-color: rgba(255,255,255,0.1);
+                border-radius: 8px;
+                min-height: 45px;
+            }
+        """)
+        self.title_label.setAlignment(Qt.AlignCenter)
+        right_layout.addWidget(self.title_label)
+        
+        # 進むボタン  
+        next_btn = QPushButton("進む ▶")
         next_btn.setStyleSheet("""
             QPushButton {
                 background-color: #e74c3c;
                 color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
+                border: 2px solid #c0392b;
+                padding: 8px 15px;
+                border-radius: 6px;
                 font-size: 12px;
+                font-weight: bold;
+                min-width: 65px;
+                max-width: 65px;
+                min-height: 35px;
+                max-height: 35px;
             }
             QPushButton:hover {
                 background-color: #c0392b;
+                border-color: #a93226;
+            }
+            QPushButton:pressed {
+                background-color: #a93226;
             }
         """)
         next_btn.clicked.connect(self.next_mode)
+        right_layout.addWidget(next_btn)
         
-        header_layout.addWidget(prev_btn)
-        header_layout.addWidget(next_btn)
-        
+        header_layout.addWidget(right_section, 2)
         main_layout.addWidget(header_widget)
     
+    def toggle_sidebar(self):
+        """サイドバーの開閉を切り替え"""
+        if hasattr(self, 'side_panel') and self.side_panel:
+            if self.side_panel.isVisible():
+                self.side_panel.hide()
+                self.sidebar_btn.setText("≡")
+            else:
+                self.side_panel.show()
+                self.sidebar_btn.setText("×")
+    
     def create_footer(self, main_layout):
-        """フッター作成"""
+        """フッター作成（インジケータ・デバッグ情報表示）"""
         self.status_bar = self.statusBar()
+        self.status_bar.setFixedHeight(50)  # 高さを拡大
         self.status_bar.setStyleSheet("""
             QStatusBar {
                 background-color: #34495e;
                 color: white;
                 font-size: 12px;
+                border-top: 3px solid #2c3e50;
+                padding: 5px 20px;
+            }
+            QStatusBar QLabel {
+                margin-right: 15px;
+                padding: 2px 8px;
+                border-radius: 3px;
             }
         """)
+        
+        # 接続状態インジケータを作成
+        self.mqtt_indicator = QLabel("MQTT: 未接続")
+        self.mqtt_indicator.setStyleSheet("background-color: #e74c3c; color: white;")
+        self.status_bar.addPermanentWidget(self.mqtt_indicator)
+        
+        self.rest_indicator = QLabel("REST: 未接続")
+        self.rest_indicator.setStyleSheet("background-color: #e74c3c; color: white;")
+        self.status_bar.addPermanentWidget(self.rest_indicator)
+        
+        self.ros2_indicator = QLabel("ROS2: 未接続")
+        self.ros2_indicator.setStyleSheet("background-color: #e74c3c; color: white;")
+        self.status_bar.addPermanentWidget(self.ros2_indicator)
+        
         self.update_status_bar()
     
     def switch_to_mode(self, mode: AppMode):
         """モード切り替え"""
-        # EDITモードから他のモードに切り替える場合、元のレイアウトを復元
-        if hasattr(self, 'original_central_widget') and self.current_mode == AppMode.EDIT:
-            self.setCentralWidget(self.original_central_widget)
-            # ツールバーを削除
-            toolbars = self.findChildren(QToolBar)
-            for toolbar in toolbars:
-                if toolbar.windowTitle() == "Mode Navigation":
-                    self.removeToolBar(toolbar)
-        
         self.current_mode = mode
         
         # メインコンテンツエリアをクリア
@@ -2553,118 +2640,32 @@ class VehicleMonitorEditor(QMainWindow):
         # モード別ビューを設定
         if mode == AppMode.CONFIG:
             self.main_content_area.layout().addWidget(self.config_view)
+            # CONFIGモードではサイドパネル非表示
+            if hasattr(self, 'side_panel'):
+                self.side_panel.hide()
         elif mode == AppMode.EDIT:
             self.setup_edit_mode()
         elif mode == AppMode.MONITOR:
             self.main_content_area.layout().addWidget(self.monitor_view)
+            # MONITORモードではサイドパネル非表示
+            if hasattr(self, 'side_panel'):
+                self.side_panel.hide()
         
         # ヘッダーのモード表示を更新
         self.update_mode_display()
         self.update_status_bar()
     
     def setup_edit_mode(self):
-        """EDITモードのセットアップ（キャンバス領域を最大化）"""
-        # ヘッダー・フッターを一時的に非表示にしてキャンバスを最大化
-        # （または、キャンバスを直接centralWidgetに設定して最大利用）
-        
-        # 現在のcentralWidgetを保存
-        self.original_central_widget = self.centralWidget()
-        
-        # EDITモード時はキャンバスを直接centralWidgetに設定
-        self.setCentralWidget(self.canvas)
+        """EDITモードのセットアップ（CONFIGモードと同じレイアウト構造）"""
+        # CONFIGモードと同じ統一レイアウトを使用
+        # キャンバスをメインコンテンツエリアに配置
+        self.main_content_area.layout().addWidget(self.canvas)
         self.canvas.show()
         
-        # ヘッダー・フッターをツールバーとステータスバーとして再配置
-        self.setup_edit_header_as_toolbar()
-        
-        # サイドパネル（QDockWidgetとして独立）
-        self.setup_edit_side_panel()
+        # サイドパネルを表示（EDITモード専用操作パネル）
+        if hasattr(self, 'side_panel'):
+            self.side_panel.show()
     
-    def setup_edit_header_as_toolbar(self):
-        """EDITモード用ヘッダーをツールバーとして配置"""
-        # ツールバーを作成
-        toolbar = self.addToolBar("Mode Navigation")
-        toolbar.setMovable(False)
-        
-        # モード表示ラベル
-        mode_label = QLabel("EDIT MODE")
-        mode_label.setStyleSheet("""
-            QLabel {
-                color: #2c3e50;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 5px 10px;
-                margin: 0 10px;
-            }
-        """)
-        toolbar.addWidget(mode_label)
-        
-        # スペーサー
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        toolbar.addWidget(spacer)
-        
-        # ナビゲーションボタン
-        prev_action = toolbar.addAction("< 戻る")
-        prev_action.triggered.connect(self.previous_mode)
-        
-        next_action = toolbar.addAction("進む >")
-        next_action.triggered.connect(self.next_mode)
-    
-    def setup_edit_side_panel(self):
-        """EDITモード用サイドパネル（main.pyから移植）"""
-        self.side_panel = QDockWidget("オブジェクト管理", self)
-        self.side_panel.setFeatures(QDockWidget.NoDockWidgetFeatures)
-        
-        # パネルウィジェット
-        panel_widget = QWidget()
-        panel_layout = QVBoxLayout(panel_widget)
-        
-        # カテゴリ別チェックボックス
-        category_group = QGroupBox("カテゴリ表示")
-        category_layout = QVBoxLayout()
-        
-        self.icon_checkbox = QCheckBox("Icon (矩形)")
-        self.icon_checkbox.setChecked(True)
-        self.icon_checkbox.stateChanged.connect(lambda: self.toggle_category_visibility(ShapeCategory.ICON))
-        
-        self.meter_checkbox = QCheckBox("Meter (円形)")
-        self.meter_checkbox.setChecked(True)
-        self.meter_checkbox.stateChanged.connect(lambda: self.toggle_category_visibility(ShapeCategory.METER))
-        
-        self.ocr_checkbox = QCheckBox("OCR (矩形)")
-        self.ocr_checkbox.setChecked(True)
-        self.ocr_checkbox.stateChanged.connect(lambda: self.toggle_category_visibility(ShapeCategory.OCR))
-        
-        self.custom_checkbox = QCheckBox("Custom")
-        self.custom_checkbox.setChecked(True)
-        self.custom_checkbox.stateChanged.connect(lambda: self.toggle_category_visibility(ShapeCategory.CUSTOM))
-        
-        category_layout.addWidget(self.icon_checkbox)
-        category_layout.addWidget(self.meter_checkbox)
-        category_layout.addWidget(self.ocr_checkbox)
-        category_layout.addWidget(self.custom_checkbox)
-        category_group.setLayout(category_layout)
-        
-        # パーツリストツリー
-        self.parts_tree = QTreeWidget()
-        self.parts_tree.setHeaderLabels(["名前", "カテゴリ", "タイプ"])
-        self.parts_tree.itemClicked.connect(self.on_tree_item_clicked)
-        
-        # Vehicle読み込みボタン
-        load_vehicle_btn = QPushButton("Vehicle JSON読み込み")
-        load_vehicle_btn.clicked.connect(self.load_vehicle)
-        
-        # レイアウトに追加
-        panel_layout.addWidget(load_vehicle_btn)
-        panel_layout.addWidget(category_group)
-        panel_layout.addWidget(QLabel("パーツリスト:"))
-        panel_layout.addWidget(self.parts_tree)
-        panel_layout.addStretch()
-        
-        self.side_panel.setWidget(panel_widget)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.side_panel)
-        self.side_panel.setFixedWidth(300)
     
     def next_mode(self):
         """次のモードに遷移"""
@@ -2740,39 +2741,62 @@ class VehicleMonitorEditor(QMainWindow):
             self.switch_to_mode(AppMode.EDIT)  # エラーでもEDITモードに切り替え
     
     def update_mode_display(self):
-        """ヘッダーのモード表示を更新"""
+        """ヘッダーのモード表示を更新（改善版）"""
+        mode_icons = {"CONFIG": "⚙️", "EDIT": "✏️", "MONITOR": "📊"}
         for mode, label in self.mode_labels.items():
+            icon = mode_icons.get(mode.value, "")
             if mode == self.current_mode:
+                label.setText(f"{icon} {mode.value}")
                 label.setStyleSheet("""
                     QLabel {
                         color: white;
-                        font-size: 14px;
+                        font-size: 16px;
                         font-weight: bold;
-                        padding: 5px 10px;
-                        margin: 0 5px;
+                        padding: 8px 15px;
+                        margin: 0 8px;
                         background-color: #e74c3c;
-                        border-radius: 3px;
+                        border-radius: 6px;
+                        border: 2px solid #c0392b;
                     }
                 """)
             else:
+                label.setText(f"{icon} {mode.value}")
                 label.setStyleSheet("""
                     QLabel {
                         color: #bdc3c7;
-                        font-size: 14px;
-                        padding: 5px 10px;
-                        margin: 0 5px;
-                        border-radius: 3px;
+                        font-size: 16px;
+                        font-weight: bold;
+                        padding: 8px 15px;
+                        margin: 0 8px;
+                        border-radius: 6px;
+                        background-color: rgba(255,255,255,0.1);
                     }
                 """)
     
     def update_status_bar(self):
-        """ステータスバーを更新"""
-        config_name = "config-40.json" if self.config_data else "未読み込み"
-        vehicle_name = self.vehicle_data.name if self.vehicle_data else "未読み込み"
+        """ステータスバーを更新（デバッグ情報）"""
+        # デバッグ情報とシステム情報
+        mode_icons = {"CONFIG": "⚙️", "EDIT": "✏️", "MONITOR": "📊"}
+        current_icon = mode_icons.get(self.current_mode.value, "")
+        
+        vehicle_name = self.vehicle_data.name if self.vehicle_data else "未選択"
         parts_count = len(self.canvas.shapes) if hasattr(self.canvas, 'shapes') else 0
         
-        status_text = f"Current Mode: {self.current_mode.value} | Config: {config_name} | Vehicle: {vehicle_name} | Parts: {parts_count}"
-        self.status_bar.showMessage(status_text)
+        # 簡潔なデバッグ情報
+        debug_info = f"{current_icon} {self.current_mode.value} | 🚗 {vehicle_name} | 🔧 {parts_count}個"
+        
+        # 画像情報
+        if hasattr(self.canvas, 'original_pixmap') and self.canvas.original_pixmap:
+            img_w = self.canvas.original_pixmap.width()
+            img_h = self.canvas.original_pixmap.height()
+            debug_info += f" | 🖼️ {img_w}×{img_h}"
+        
+        self.status_bar.showMessage(debug_info)
+        
+        # タイトルラベルも更新（車種情報）
+        if hasattr(self, 'title_label'):
+            vehicle_display = f"🚗 {vehicle_name}" if vehicle_name != "未選択" else "🚗 Vehicle Monitor"
+            self.title_label.setText(vehicle_display)
         
     def load_image(self):
         """画像ファイルを読み込む"""
