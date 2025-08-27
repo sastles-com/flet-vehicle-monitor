@@ -2415,6 +2415,9 @@ class VehicleMonitorEditor(QMainWindow):
         # UIをセットアップ
         self.setup_ui()
         
+        # サイドパネル初期化（EDIT用）
+        self.setup_side_panel()
+        
         # 初期モードをCONFIGに設定
         self.switch_to_mode(AppMode.CONFIG)
         
