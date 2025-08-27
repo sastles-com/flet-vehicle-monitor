@@ -2967,25 +2967,18 @@ class ConfigMainView(QWidget):
     
     def mqtt_connection_failed(self, error_message: str):
         """MQTT接続失敗処理"""
-        self.mqtt_status_label.setText(f"🔴 MQTT: 接続失敗 - {error_message}")
-        self.mqtt_status_label.setStyleSheet("""
-            QLabel {
-                font-size: 14px;
-                color: #f44336;
-                padding: 8px 12px;
-                background-color: rgba(244, 67, 54, 0.1);
-                border-radius: 4px;
-                margin: 8px 0;
-            }
-        """)
+        # フッターのMQTTインジケーターを更新
+        if self.parent_window:
+            self.parent_window.update_mqtt_status(False)
+        
         print(f"CONFIG: MQTT connection failed: {error_message}")
     
     def mqtt_connected(self):
         """MQTT接続完了処理"""
         # サイドバーのメッセージは削除、代わりにフッターのMQTTインジケーターを更新
         # （親ウィンドウに通知して更新）
-        if self.main_window:
-            self.main_window.update_mqtt_status(True)
+        if self.parent_window:
+            self.parent_window.update_mqtt_status(True)
         
         # imageトピック購読開始
         self.mqtt_service.subscribe_image_topic()
@@ -3688,7 +3681,7 @@ class VehicleMonitorEditor(QMainWindow):
         super().__init__()
         self.setWindowTitle("Vehicle Monitor - 3Mode System")
         self.setGeometry(100, 100, 1200, 800)
-        self.showFullScreen()  # 全画面表示に変更
+        self.showMaximized()  # 最大サイズのウィンドウ表示
         
         # モード管理
         self.current_mode = AppMode.CONFIG
@@ -4339,37 +4332,54 @@ class VehicleMonitorEditor(QMainWindow):
         mode_icons = {"CONFIG": "⚙️", "EDIT": "✏️", "MONITOR": "📊"}
         for mode, label in self.mode_labels.items():
             icon = mode_icons.get(mode.value, "")
+            label.setText(icon)  # 常にアイコンのみ表示
             if mode == self.current_mode:
-                label.setText(f"{icon} {mode.value}")
+                # アクティブ状態のスタイル
                 label.setStyleSheet("""
                     QLabel {
                         color: white;
-                        font-size: 16px;
+                        font-size: 20px;
                         font-weight: bold;
-                        padding: 8px 15px;
-                        margin: 0 8px;
+                        padding: 6px 10px;
+                        margin: 0 4px;
                         background-color: #e74c3c;
-                        border-radius: 6px;
                         border: 2px solid #c0392b;
+                        border-radius: 6px;
+                        min-width: 36px;
+                        max-width: 36px;
+                        text-align: center;
                     }
                 """)
             else:
-                label.setText(f"{icon} {mode.value}")
+                # 非アクティブ状態のスタイル
                 label.setStyleSheet("""
                     QLabel {
                         color: #bdc3c7;
-                        font-size: 16px;
+                        font-size: 18px;
                         font-weight: bold;
-                        padding: 8px 15px;
-                        margin: 0 8px;
-                        border-radius: 6px;
+                        padding: 4px 8px;
+                        margin: 0 2px;
+                        border-radius: 4px;
                         background-color: rgba(255,255,255,0.1);
+                        min-width: 32px;
+                        max-width: 32px;
+                        text-align: center;
                     }
                 """)
     
     def update_mqtt_status(self, connected: bool):
         """MQTTステータスを更新"""
         self.mqtt_connected = connected
+        
+        # フッターのMQTTインジケータを更新
+        if hasattr(self, 'mqtt_indicator'):
+            if connected:
+                self.mqtt_indicator.setText("MQTT: 接続完了")
+                self.mqtt_indicator.setStyleSheet("background-color: #27ae60; color: white; font-weight: bold;")
+            else:
+                self.mqtt_indicator.setText("MQTT: 未接続")
+                self.mqtt_indicator.setStyleSheet("background-color: #e74c3c; color: white; font-weight: bold;")
+        
         self.update_status_bar()
     
     def update_status_bar(self):
@@ -4381,11 +4391,8 @@ class VehicleMonitorEditor(QMainWindow):
         vehicle_name = self.vehicle_data.name if self.vehicle_data else "未選択"
         parts_count = len(self.canvas.shapes) if hasattr(self.canvas, 'shapes') else 0
         
-        # MQTTステータス
-        mqtt_status = "🟢 MQTT" if getattr(self, 'mqtt_connected', False) else "🔴 MQTT"
-        
-        # 簡潔なデバッグ情報
-        debug_info = f"{current_icon} {self.current_mode.value} | {mqtt_status} | 🚗 {vehicle_name} | 🔧 {parts_count}個"
+        # 簡潔なデバッグ情報（MQTTステータスはフッターのインジケータで表示）
+        debug_info = f"{current_icon} {self.current_mode.value} | 🚗 {vehicle_name} | 🔧 {parts_count}個"
         
         # 画像情報
         if hasattr(self.canvas, 'original_pixmap') and self.canvas.original_pixmap:
