@@ -2650,6 +2650,11 @@ class ConfigMainView(QWidget):
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setText("📹 MQTTに接続後、\nリアルタイムカメラ映像が表示されます\n\nカメラ位置を調整してください\n\n画角が決まったら右上のEDITボタンを押してください")
         self.image_label.setScaledContents(False)  # アスペクト比維持のためFalseに設定
+        # サイズポリシーでレイアウト安定化
+        from PySide6.QtWidgets import QSizePolicy
+        self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.image_label.setMinimumSize(400, 300)
+        self.image_label.setMaximumSize(1200, 900)
         layout.addWidget(self.image_label, 1)  # 拡張可能
         
         return panel
@@ -2674,6 +2679,11 @@ class ConfigMainView(QWidget):
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setText("MQTTに接続後、\nリアルタイム画像が表示されます\n\nカメラアングルを調整してください")
         self.image_label.setScaledContents(False)  # アスペクト比維持のためFalseに設定
+        # サイズポリシーでレイアウト安定化
+        from PySide6.QtWidgets import QSizePolicy
+        self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.image_label.setMinimumSize(400, 300)
+        self.image_label.setMaximumSize(1200, 900)
         layout.addWidget(self.image_label)
         
         return panel
@@ -3010,10 +3020,21 @@ class ConfigMainView(QWidget):
         """プレビュー画像を表示（適切なスケーリング）"""
         try:
             if self.image_label:
-                # ラベルサイズに合わせてスケーリング（アスペクト比維持）
-                label_size = self.image_label.size()
+                # 固定サイズでスケーリング（レイアウトの不安定化を防ぐ）
+                # ラベルの親コンテナサイズを基準に適切なサイズを計算
+                parent_widget = self.image_label.parent()
+                if parent_widget:
+                    parent_size = parent_widget.size()
+                    # 親のサイズから余白を考慮した表示領域を計算
+                    max_width = parent_size.width() - 40  # 左右余白20px
+                    max_height = parent_size.height() - 60  # 上下余白30px
+                    target_size = QSize(max(max_width, 400), max(max_height, 300))
+                else:
+                    # フォールバック: 固定サイズ
+                    target_size = QSize(800, 600)
+                
                 scaled_pixmap = pixmap.scaled(
-                    label_size,
+                    target_size,
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation
                 )
@@ -3120,6 +3141,11 @@ class MonitorMainView(QWidget):
             }
         """)
         self.image_label.setText("📷 MQTT画像ストリーム待機中...\n\nSTARTボタンを押して監視を開始してください")
+        # サイズポリシーでレイアウト安定化
+        from PySide6.QtWidgets import QSizePolicy
+        self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.image_label.setMinimumSize(400, 300)
+        self.image_label.setMaximumSize(1200, 900)
         layout.addWidget(self.image_label)
         
         # ステータス表示
@@ -3473,19 +3499,13 @@ class MonitorMainView(QWidget):
                 print("MONITOR: Error - image_label is None")
                 return
             
-            # ラベルのサイズを確認
-            label_size = self.image_label.size()
-            print(f"MONITOR: Image label size: {label_size.width()} x {label_size.height()}")
-            
-            # ラベルサイズが小さすぎる場合は、親ウィジェットのサイズを使用
-            if label_size.width() < 100 or label_size.height() < 100:
-                # 親ウィジェットのサイズを取得
-                parent_size = self.size()
-                # 適切なサイズに調整（75%の幅、高さから他のウィジェット分を除く）
-                target_width = int(parent_size.width() * 0.75 * 0.9)  # 左側75%の90%
-                target_height = int(parent_size.height() * 0.7)  # 高さの70%
-                label_size = QSize(max(target_width, 400), max(target_height, 300))
-                print(f"MONITOR: Using adjusted size: {label_size.width()} x {label_size.height()}")
+            # 固定サイズでスケーリング（レイアウトの不安定化を防ぐ）
+            parent_size = self.size()
+            # 適切なサイズを固定で計算（75%の幅、高さから他のウィジェット分を除く）
+            target_width = int(parent_size.width() * 0.75 * 0.9)  # 左側75%の90%
+            target_height = int(parent_size.height() * 0.7)  # 高さの70%
+            label_size = QSize(max(target_width, 400), max(target_height, 300))
+            print(f"MONITOR: Using fixed target size: {label_size.width()} x {label_size.height()}")
             
             # スケーリングして表示
             scaled_pixmap = pixmap.scaled(
