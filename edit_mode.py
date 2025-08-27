@@ -2332,6 +2332,7 @@ class ConfigMainView(QWidget):
         self.mqtt_service = MQTTService()
         self.mqtt_service.connected.connect(self.on_mqtt_connected)
         self.mqtt_service.image_received.connect(self.on_image_received)
+        self.mqtt_service.ros2_alive_received.connect(self.on_ros2_alive_received)
         
         # MQTTプレビュー用
         self.image_label = None
@@ -2690,25 +2691,8 @@ class ConfigMainView(QWidget):
     
     def auto_show_config_dialog(self):
         """ユーザー体験フロー: 起動時に自動でconfig.jsonダイアログ表示"""
-        # テスト用: config-40.jsonが存在すれば自動読み込み
-        default_config_path = r"C:\Users\table0\Desktop\config\config-40.json"
-        import os
-        if os.path.exists(default_config_path):
-            print(f"CONFIG MODE: Auto-loading config-40.json for testing: {default_config_path}")
-            self.load_specific_config_file(default_config_path)
-        else:
-            print("CONFIG MODE: 自動でconfig.jsonファイルダイアログを表示します")
-            self.load_config_file()
-    
-    def load_specific_config_file(self, file_path: str):
-        """指定されたconfig.jsonファイルを読み込み（テスト用）"""
-        try:
-            print(f"CONFIG: Auto-loading specific config file: {file_path}")
-            self.load_config_data(file_path)
-        except Exception as e:
-            print(f"CONFIG: Error loading config file {file_path}: {e}")
-            # エラーの場合は通常のダイアログにフォールバック
-            self.load_config_file()
+        print("CONFIG MODE: 自動でconfig.jsonファイルダイアログを表示します")
+        self.load_config_file()
     
     def load_config_file(self):
         """config.jsonファイル読み込み（デフォルト：デスクトップ/config）"""
@@ -2780,6 +2764,19 @@ class ConfigMainView(QWidget):
             
             # ユーザー体験フロー: MQTTに接続してプレビュー開始
             self.connect_mqtt()
+            
+            # RestAPI導通テストを実行
+            restapi_config = self.config_data.get("RestAPI", {})
+            if restapi_config:
+                rest_host = restapi_config.get("host", "")
+                rest_port = str(restapi_config.get("port", ""))
+                if rest_host and rest_port and hasattr(self, 'parent_window') and self.parent_window:
+                    print(f"CONFIG: Testing RestAPI connection to {rest_host}:{rest_port}")
+                    self.parent_window.test_restapi_connection(rest_host, rest_port)
+            
+            # メインウィンドウのタイトルをベンチ名で更新
+            if hasattr(self, 'parent_window') and self.parent_window:
+                self.parent_window.update_title_with_bench(bench_name)
             
             print(f"CONFIG: Loaded config for bench: {bench_name}")
             
@@ -2923,6 +2920,8 @@ class ConfigMainView(QWidget):
         # フッターのMQTTインジケーターを更新
         if self.parent_window:
             self.parent_window.update_mqtt_status(False)
+            # MQTT接続失敗時はROS2も未接続にする
+            self.parent_window.update_ros2_status(False)
         
         print(f"CONFIG: MQTT connection failed: {error_message}")
     
@@ -2932,6 +2931,8 @@ class ConfigMainView(QWidget):
         # （親ウィンドウに通知して更新）
         if self.parent_window:
             self.parent_window.update_mqtt_status(True)
+            # ROS2状態初期化（未接続から開始）
+            self.parent_window.initialize_ros2_status()
         
         # imageトピック購読開始
         self.mqtt_service.subscribe_image_topic()
@@ -2942,6 +2943,13 @@ class ConfigMainView(QWidget):
         self.fps_timer.start(1000)  # 1秒ごと
         
         print("CONFIG: MQTT connected - Ready for camera adjustment")
+    
+    @Slot()
+    def on_ros2_alive_received(self):
+        """ROS2応答受信時の処理"""
+        print("CONFIG: ROS2 alive signal received")
+        if hasattr(self, 'parent_window') and self.parent_window:
+            self.parent_window.update_ros2_status(True)
     
     @Slot(str)
     def on_image_received(self, base64_image: str):
@@ -3644,7 +3652,6 @@ class VehicleMonitorEditor(QMainWindow):
         super().__init__()
         self.setWindowTitle("Vehicle Monitor - 3Mode System")
         self.setGeometry(100, 100, 1200, 800)
-        self.showMaximized()  # 最大サイズのウィンドウ表示
         
         # モード管理
         self.current_mode = AppMode.CONFIG
@@ -3671,6 +3678,9 @@ class VehicleMonitorEditor(QMainWindow):
         # 初期ナビゲーションボタン設定
         self.update_navigation_buttons()
         
+        # UI初期化完了後に最大化を実行（タイミング問題修正）
+        QTimer.singleShot(100, self.showMaximized)
+        
     def keyPressEvent(self, event):
         """キーイベントハンドラ - F11で全画面切り替え、ESCで全画面解除"""
         if event.key() == Qt.Key_F11:
@@ -3689,6 +3699,163 @@ class VehicleMonitorEditor(QMainWindow):
         else:
             super().keyPressEvent(event)
         
+    def update_title_with_bench(self, bench_name: str):
+        """ヘッダタイトルをベンチ名で更新"""
+        if bench_name and bench_name != "Unknown":
+            # ヘッダのタイトルラベルを更新
+            if hasattr(self, 'title_label'):
+                self.title_label.setText(f"🏭 {bench_name}")
+            # ウィンドウタイトルも更新
+            self.setWindowTitle(f"Vehicle Monitor - {bench_name}")
+            print(f"MAIN: Updated title with bench name: {bench_name}")
+        else:
+            # ベンチ名がない場合はデフォルト表示
+            if hasattr(self, 'title_label'):
+                self.title_label.setText("🚗 Vehicle Monitor")
+            self.setWindowTitle("Vehicle Monitor - 3Mode System")
+    
+    def test_restapi_connection(self, host: str, port: str):
+        """RestAPI導通テスト（非同期）"""
+        def test_in_background():
+            try:
+                import requests
+                from requests.adapters import HTTPAdapter
+                from requests.packages.urllib3.util.retry import Retry
+                
+                # タイムアウトとリトライ設定
+                session = requests.Session()
+                retry_strategy = Retry(
+                    total=1,
+                    backoff_factor=0.1,
+                    status_forcelist=[429, 500, 502, 503, 504],
+                )
+                adapter = HTTPAdapter(max_retries=retry_strategy)
+                session.mount("http://", adapter)
+                
+                # RestAPIエンドポイントをテスト（複数のパスを試行）
+                test_paths = ["/", "/status", "/health", "/docs"]
+                
+                connected = False
+                for path in test_paths:
+                    url = f"http://{host}:{port}{path}"
+                    print(f"RestAPI: Testing connection to {url}")
+                    
+                    try:
+                        response = session.get(url, timeout=3)
+                        print(f"RestAPI: Response from {path} - Status: {response.status_code}")
+                        
+                        # 200番台または404でも接続成功とみなす（サーバーが応答している）
+                        if 200 <= response.status_code < 500:
+                            print(f"RestAPI: Connection successful to {host}:{port} (status: {response.status_code})")
+                            connected = True
+                            break
+                    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                        # このパスで接続エラーの場合は次のパスを試行
+                        continue
+                
+                if connected:
+                    # UIスレッドで状態更新
+                    QTimer.singleShot(0, lambda: self.update_restapi_status(True))
+                else:
+                    print(f"RestAPI: All test paths failed for {host}:{port}")
+                    QTimer.singleShot(0, lambda: self.update_restapi_status(False))
+                    
+            except requests.exceptions.ConnectionError:
+                print(f"RestAPI: Connection error - Cannot reach {host}:{port}")
+                QTimer.singleShot(0, lambda: self.update_restapi_status(False))
+            except requests.exceptions.Timeout:
+                print(f"RestAPI: Timeout error - {host}:{port} did not respond")
+                QTimer.singleShot(0, lambda: self.update_restapi_status(False))
+            except Exception as e:
+                print(f"RestAPI: Unexpected error - {e}")
+                QTimer.singleShot(0, lambda: self.update_restapi_status(False))
+        
+        # バックグラウンドでテスト実行
+        import threading
+        threading.Thread(target=test_in_background, daemon=True).start()
+    
+    def update_restapi_status(self, is_connected: bool):
+        """RestAPI接続状態を更新"""
+        if hasattr(self, 'rest_indicator'):
+            if is_connected:
+                self.rest_indicator.setText("REST: 接続済")
+                self.rest_indicator.setStyleSheet("background-color: #27ae60; color: white;")
+                print("RestAPI: Status updated to connected")
+            else:
+                self.rest_indicator.setText("REST: 未接続")
+                self.rest_indicator.setStyleSheet("background-color: #e74c3c; color: white;")
+                print("RestAPI: Status updated to disconnected")
+    
+    def initialize_ros2_status(self):
+        """ROS2接続状態を初期化（未接続）"""
+        if hasattr(self, 'ros2_indicator'):
+            self.ros2_indicator.setText("ROS2: 未接続")
+            self.ros2_indicator.setStyleSheet("background-color: #e74c3c; color: white;")
+            print("ROS2: Status initialized to disconnected")
+        
+        # ROS2点滅用の状態管理
+        self.ros2_blink_state = False  # False: 暗い状態, True: 明るい状態
+        self.ros2_is_alive = False  # ROS2が生きているかどうか
+        
+        # ROS2点滅タイマーを設定（500ms間隔で点滅）
+        if hasattr(self, 'ros2_blink_timer'):
+            self.ros2_blink_timer.stop()
+        
+        self.ros2_blink_timer = QTimer()
+        self.ros2_blink_timer.timeout.connect(self.on_ros2_blink)
+        self.ros2_blink_timer.start(500)  # 500ms間隔で点滅
+        
+        # タイムアウトタイマーを設定（3秒後に未接続に戻す）
+        if hasattr(self, 'ros2_timeout_timer'):
+            self.ros2_timeout_timer.stop()
+        
+        self.ros2_timeout_timer = QTimer()
+        self.ros2_timeout_timer.setSingleShot(True)  # ワンショット
+        self.ros2_timeout_timer.timeout.connect(self.on_ros2_timeout)
+        self.ros2_timeout_timer.start(3000)  # 3秒でタイムアウト
+        print("ROS2: Blink and timeout monitoring started")
+    
+    def update_ros2_status(self, is_alive: bool):
+        """ROS2接続状態を更新"""
+        self.ros2_is_alive = is_alive
+        
+        if is_alive:
+            # タイムアウトタイマーをリセット
+            if hasattr(self, 'ros2_timeout_timer') and self.ros2_timeout_timer:
+                self.ros2_timeout_timer.start(3000)  # 3秒でタイムアウト
+                print("ROS2: Alive signal received, timeout timer reset (3 seconds)")
+        else:
+            print("ROS2: Status updated to disconnected")
+            if hasattr(self, 'ros2_indicator'):
+                self.ros2_indicator.setText("ROS2: 未接続")
+                self.ros2_indicator.setStyleSheet("background-color: #e74c3c; color: white;")
+    
+    def on_ros2_blink(self):
+        """ROS2点滅処理（500ms間隔）"""
+        if not hasattr(self, 'ros2_indicator'):
+            return
+            
+        if self.ros2_is_alive:
+            # 生存中は点滅表示
+            self.ros2_blink_state = not self.ros2_blink_state
+            if self.ros2_blink_state:
+                # 明るい状態
+                self.ros2_indicator.setText("ROS2: 接続済")
+                self.ros2_indicator.setStyleSheet("background-color: #27ae60; color: white;")
+            else:
+                # 暗い状態
+                self.ros2_indicator.setText("ROS2: 接続済")
+                self.ros2_indicator.setStyleSheet("background-color: #1e8449; color: white;")
+        else:
+            # 未接続は固定表示
+            self.ros2_indicator.setText("ROS2: 未接続")
+            self.ros2_indicator.setStyleSheet("background-color: #e74c3c; color: white;")
+    
+    def on_ros2_timeout(self):
+        """ROS2応答タイムアウト処理"""
+        print("ROS2: Timeout - No alive signal received for 3 seconds, marking as disconnected")
+        self.update_ros2_status(False)
+    
     def setup_ui(self):
         """3モード対応UIセットアップ"""
         # メインウィジェットとレイアウト
@@ -3818,7 +3985,7 @@ class VehicleMonitorEditor(QMainWindow):
         right_layout.addWidget(self.prev_btn)
         
         # 中央タイトル（車種情報）
-        self.title_label = QLabel("🚗 XTRAIL")
+        self.title_label = QLabel("🚗 Vehicle Monitor")
         self.title_label.setStyleSheet("""
             QLabel {
                 color: white;

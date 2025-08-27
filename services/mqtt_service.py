@@ -25,6 +25,7 @@ class MQTTService(QObject):
     connected = Signal(bool)  # 接続状態変更
     disconnected = Signal()   # 切断
     image_received = Signal(str)  # 画像データ受信（base64文字列）
+    ros2_alive_received = Signal()  # ROS2応答受信（{"alive": true}）
     
     def __init__(self):
         super().__init__()
@@ -193,6 +194,27 @@ class MQTTService(QObject):
                     print(f"*** Raw payload preview (first 200 chars): {msg.payload.decode()[:200]}... ***")
                 except Exception as e:
                     print(f"*** Unexpected error during image processing: {e} ***")
+                    import traceback
+                    traceback.print_exc()
+            
+            elif msg.topic == "response":
+                # responseトピック受信処理（ROS2生存確認）
+                try:
+                    print("*** MQTT: Received RESPONSE topic ***")
+                    message_data = json.loads(msg.payload.decode())
+                    print(f"*** MQTT: Response data: {message_data} ***")
+                    
+                    # ROS2生存確認
+                    if "alive" in message_data and message_data["alive"] is True:
+                        print("*** MQTT: ROS2 alive signal detected ***")
+                        # ROS2応答シグナル送信
+                        self.ros2_alive_received.emit()
+                        print("*** MQTT: ROS2 alive signal emitted ***")
+                    
+                except json.JSONDecodeError as e:
+                    print(f"*** Response topic JSON decode error: {e} ***")
+                except Exception as e:
+                    print(f"*** Unexpected error during response processing: {e} ***")
                     import traceback
                     traceback.print_exc()
                     
