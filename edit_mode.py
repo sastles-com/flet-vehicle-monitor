@@ -2604,47 +2604,6 @@ class ConfigMainView(QWidget):
         bench_layout.addStretch()
         main_layout.addLayout(bench_layout)
         
-        # 保存・再読み込みボタン
-        button_layout = QHBoxLayout()
-        
-        save_btn = QPushButton("💾 保存")
-        save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
-        save_btn.clicked.connect(self.save_config_changes)
-        button_layout.addWidget(save_btn)
-        
-        reload_btn = QPushButton("🔄 再読み込み")
-        reload_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FF9800;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #F57C00;
-            }
-        """)
-        reload_btn.clicked.connect(self.reload_current_config)
-        button_layout.addWidget(reload_btn)
-        
-        main_layout.addLayout(button_layout)
-        
         group.setLayout(main_layout)
         return group
     
@@ -2678,22 +2637,6 @@ class ConfigMainView(QWidget):
         
         # プレビュータイトルは削除（よりコンパクトに）
         
-        # 状態表示
-        self.connection_status = QLabel("⏳ config.jsonを読み込んでMQTTに接続してください")
-        self.connection_status.setStyleSheet("""
-            QLabel {
-                font-size: 16px;
-                color: #666;
-                padding: 10px 20px;
-                text-align: center;
-                background-color: #f5f5f5;
-                border-radius: 8px;
-                margin: 10px;
-            }
-        """)
-        self.connection_status.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.connection_status)
-        
         # 画像表示エリア（全幅利用）
         self.image_label = QLabel()
         self.image_label.setStyleSheet("""
@@ -2706,7 +2649,7 @@ class ConfigMainView(QWidget):
         """)
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setText("📹 MQTTに接続後、\nリアルタイムカメラ映像が表示されます\n\nカメラ位置を調整してください\n\n画角が決まったら右上のEDITボタンを押してください")
-        self.image_label.setScaledContents(True)
+        self.image_label.setScaledContents(False)  # アスペクト比維持のためFalseに設定
         layout.addWidget(self.image_label, 1)  # 拡張可能
         
         return panel
@@ -2730,7 +2673,7 @@ class ConfigMainView(QWidget):
         """)
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setText("MQTTに接続後、\nリアルタイム画像が表示されます\n\nカメラアングルを調整してください")
-        self.image_label.setScaledContents(True)
+        self.image_label.setScaledContents(False)  # アスペクト比維持のためFalseに設定
         layout.addWidget(self.image_label)
         
         return panel
