@@ -14,8 +14,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QGraphicsView,
                                QTreeWidget, QTreeWidgetItem, QCheckBox,
                                QGroupBox, QScrollArea, QGraphicsLineItem,
                                QGraphicsPathItem, QSizePolicy)
-from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QSizeF, QTimer
-from PySide6.QtGui import QPixmap, QPen, QBrush, QColor, QWheelEvent, QPainter, QPainterPath
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QSizeF, QTimer, QSize
+from PySide6.QtGui import QPixmap, QPen, QBrush, QColor, QWheelEvent, QPainter, QPainterPath, QFont
 import time
 import base64
 from io import BytesIO
@@ -2753,7 +2753,7 @@ class ConfigMainView(QWidget):
         """)
         
         # imageトピック購読開始
-        self.mqtt_service.subscribe_to_image_topic()
+        self.mqtt_service.subscribe_image_topic()
         
         # FPS計測開始
         self.fps_timer = QTimer()
@@ -2837,41 +2837,547 @@ class ConfigMainView(QWidget):
 
 
 class MonitorMainView(QWidget):
-    """MONITORモード用プレースホルダービュー"""
+    """MONITORモード用リアルタイム画像表示＋パーツ検出結果表示ビュー"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.main_window = parent  # VehicleMonitorEditorへの参照
+        self.mqtt_service = None  # MQTTサービス（親から設定される）
+        
+        # 画像表示関連
+        self.current_pixmap = None
+        self.current_fps = 0.0
+        self.fps_counter = 0
+        self.fps_start_time = time.time()
+        
+        # パーツ検出結果管理
+        self.detection_results = {}  # パーツ名: 検出結果の辞書
+        self.vehicle_data = None  # VehicleDataへの参照
+        
         self.setup_ui()
     
     def setup_ui(self):
-        """UI設定"""
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignCenter)
+        """MONITOR用UI設定"""
+        # メインレイアウト
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(15)
         
-        title_label = QLabel("MONITOR MODE")
+        # ===== 左側：画像表示エリア =====
+        image_area = self.create_image_display_area()
+        main_layout.addWidget(image_area, 3)  # 75%の幅
+        
+        # ===== 右側：検出結果パネル =====
+        results_panel = self.create_detection_results_panel()
+        main_layout.addWidget(results_panel, 1)  # 25%の幅
+    
+    def create_image_display_area(self):
+        """画像表示エリア作成"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        
+        # ヘッダー：タイトルとFPS表示
+        header_widget = QWidget()
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(15, 10, 15, 10)
+        header_layout.setSpacing(20)
+        
+        # タイトル
+        title_label = QLabel("📊 MONITOR MODE - リアルタイム画像監視")
         title_label.setStyleSheet("""
             QLabel {
-                font-size: 32px;
+                font-size: 18px;
                 font-weight: bold;
-                color: #333;
-                margin: 20px;
+                color: #2c3e50;
+                margin: 0;
             }
         """)
-        title_label.setAlignment(Qt.AlignCenter)
+        header_layout.addWidget(title_label)
         
-        desc_label = QLabel("監視画面（プレースホルダー）\n\nMQTT画像受信とパーツ検出結果を\nリアルタイム表示します")
-        desc_label.setStyleSheet("""
+        header_layout.addStretch()
+        
+        # FPS・解像度表示
+        self.fps_label = QLabel("FPS: 0.0 | 解像度: -- x --")
+        self.fps_label.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                color: #7f8c8d;
+                margin: 0;
+                padding: 5px 10px;
+                background-color: rgba(52, 152, 219, 0.1);
+                border-radius: 4px;
+            }
+        """)
+        header_layout.addWidget(self.fps_label)
+        
+        layout.addWidget(header_widget)
+        
+        # 画像表示ラベル
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setStyleSheet("""
+            QLabel {
+                background-color: #ecf0f1;
+                border: 2px solid #bdc3c7;
+                border-radius: 8px;
+                min-height: 400px;
+                font-size: 14px;
+                color: #7f8c8d;
+            }
+        """)
+        self.image_label.setText("📷 MQTT画像ストリーム待機中...\n\nSTARTボタンを押して監視を開始してください")
+        layout.addWidget(self.image_label)
+        
+        # ステータス表示
+        self.status_label = QLabel("⏸️ 監視停止中")
+        self.status_label.setStyleSheet("""
             QLabel {
                 font-size: 14px;
-                color: #666;
-                margin: 20px;
-                line-height: 1.5;
+                color: #e74c3c;
+                padding: 8px 12px;
+                background-color: rgba(231, 76, 60, 0.1);
+                border-radius: 4px;
+                margin: 5px 0;
             }
         """)
-        desc_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.status_label)
         
-        layout.addWidget(title_label)
-        layout.addWidget(desc_label)
+        return widget
+    
+    def create_detection_results_panel(self):
+        """検出結果パネル作成"""
+        widget = QWidget()
+        widget.setStyleSheet("""
+            QWidget {
+                background-color: #f8f9fa;
+                border-left: 3px solid #3498db;
+                border-radius: 8px;
+            }
+        """)
+        
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+        
+        # パネルタイトル
+        panel_title = QLabel("🔍 パーツ検出結果")
+        panel_title.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #2c3e50;
+                margin: 0 0 10px 0;
+            }
+        """)
+        layout.addWidget(panel_title)
+        
+        # スクロール可能な結果表示エリア
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+        """)
+        
+        self.results_container = QWidget()
+        self.results_layout = QVBoxLayout(self.results_container)
+        self.results_layout.setContentsMargins(0, 0, 0, 0)
+        self.results_layout.setSpacing(8)
+        
+        # 初期メッセージ
+        initial_msg = QLabel("監視開始後に\n検出結果が表示されます")
+        initial_msg.setStyleSheet("""
+            QLabel {
+                color: #7f8c8d;
+                font-size: 12px;
+                text-align: center;
+                margin: 20px 0;
+            }
+        """)
+        initial_msg.setAlignment(Qt.AlignCenter)
+        self.results_layout.addWidget(initial_msg)
+        
+        scroll_area.setWidget(self.results_container)
+        layout.addWidget(scroll_area)
+        
+        return widget
+    
+    def set_mqtt_service(self, mqtt_service):
+        """MQTTサービスを設定"""
+        # 既存の接続があれば切断
+        if self.mqtt_service and hasattr(self.mqtt_service, 'image_received'):
+            try:
+                self.mqtt_service.image_received.disconnect(self.on_image_received)
+                print("MONITOR: Disconnected from previous MQTT service")
+            except TypeError:
+                # 接続がない場合のエラーを無視
+                pass
+        
+        self.mqtt_service = mqtt_service
+        if mqtt_service:
+            # 画像受信シグナルに接続
+            try:
+                mqtt_service.image_received.connect(self.on_image_received)
+                print("MONITOR: Connected to MQTT image_received signal")
+            except Exception as e:
+                print(f"MONITOR: Failed to connect MQTT signal: {e}")
+    
+    def set_vehicle_data(self, vehicle_data):
+        """VehicleDataを設定"""
+        self.vehicle_data = vehicle_data
+        
+    def start_monitoring(self):
+        """監視開始"""
+        print("MONITOR: Starting monitoring process...")
+        
+        self.status_label.setText("🟢 監視実行中 - リアルタイム画像受信中")
+        self.status_label.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                color: #27ae60;
+                padding: 8px 12px;
+                background-color: rgba(39, 174, 96, 0.1);
+                border-radius: 4px;
+                margin: 5px 0;
+            }
+        """)
+        
+        # MQTTサービスのモードを設定
+        if self.mqtt_service:
+            self.mqtt_service.set_mode("MONITOR")
+            print(f"MONITOR: MQTT service mode set, connected: {self.mqtt_service.is_connected()}")
+        
+        # FPS計測の初期化
+        self.fps_counter = 0
+        self.last_frame_time = time.time()
+        self.current_fps = 0.0
+        
+        # FPS計測タイマー開始
+        if hasattr(self, 'fps_timer'):
+            self.fps_timer.stop()
+        self.fps_timer = QTimer()
+        self.fps_timer.timeout.connect(self.update_fps_display)
+        self.fps_timer.start(1000)
+        
+        print("MONITOR: Monitoring started - waiting for MQTT images...")
+    
+    def stop_monitoring(self):
+        """監視停止"""
+        self.status_label.setText("⏸️ 監視停止中")
+        self.status_label.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                color: #e74c3c;
+                padding: 8px 12px;
+                background-color: rgba(231, 76, 60, 0.1);
+                border-radius: 4px;
+                margin: 5px 0;
+            }
+        """)
+        
+        if hasattr(self, 'fps_timer'):
+            self.fps_timer.stop()
+        
+        print("MONITOR: Monitoring stopped")
+    
+    def on_image_received(self, base64_image: str):
+        """MQTT画像データ受信時の処理（CONFIGと同様だが、パーツ検出処理も追加）"""
+        try:
+            print("MONITOR: Received MQTT image data")
+            
+            # base64データをデコード
+            image_data = base64.b64decode(base64_image)
+            print(f"MONITOR: Decoded image data size: {len(image_data)} bytes")
+            
+            # QPixmapに変換
+            pixmap = QPixmap()
+            if pixmap.loadFromData(image_data):
+                print(f"MONITOR: Created pixmap {pixmap.width()}x{pixmap.height()}")
+                
+                # FPS計算
+                current_time = time.time()
+                if hasattr(self, 'last_frame_time'):
+                    frame_interval = current_time - self.last_frame_time
+                    if frame_interval > 0:
+                        self.current_fps = 1.0 / frame_interval
+                self.last_frame_time = current_time
+                self.fps_counter += 1
+                
+                # 画像にパーツ検出結果をオーバーレイ
+                annotated_pixmap = self.add_detection_overlay(pixmap)
+                print(f"MONITOR: Added detection overlay")
+                
+                # 画像を表示
+                self.display_monitor_image(annotated_pixmap)
+                print("MONITOR: Image displayed successfully")
+                
+            else:
+                print("MONITOR: Failed to load pixmap from image data")
+                
+        except Exception as e:
+            print(f"MONITOR: Error processing image: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def add_detection_overlay(self, pixmap):
+        """画像にパーツ検出結果をオーバーレイ表示"""
+        if not self.vehicle_data:
+            return pixmap
+        
+        # 新しいQPixmapを作成してオーバーレイ描画
+        overlay_pixmap = QPixmap(pixmap.size())
+        overlay_pixmap.fill(Qt.transparent)
+        
+        painter = QPainter(overlay_pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # 元画像を描画
+        painter.drawPixmap(0, 0, pixmap)
+        
+        # パーツごとに検出結果を描画
+        scale_x = pixmap.width() / 2304  # 元画像サイズからの縮尺
+        scale_y = pixmap.height() / 1296
+        
+        # アイコン（Icon）パーツの描画
+        for icon in self.vehicle_data.icon:
+            result = self.detection_results.get(icon.name, False)
+            self.draw_icon_overlay(painter, icon, result, scale_x, scale_y)
+        
+        # メーター（Meter）パーツの描画
+        for meter in self.vehicle_data.meter:
+            value = self.detection_results.get(meter.name, 0.0)
+            self.draw_meter_overlay(painter, meter, value, scale_x, scale_y)
+        
+        # OCRパーツの描画
+        for ocr in self.vehicle_data.ocr:
+            text = self.detection_results.get(ocr.name, "")
+            self.draw_ocr_overlay(painter, ocr, text, scale_x, scale_y)
+        
+        painter.end()
+        return overlay_pixmap
+    
+    def draw_icon_overlay(self, painter, icon, detected, scale_x, scale_y):
+        """アイコンパーツのオーバーレイ描画"""
+        # 矩形座標をスケール変換
+        x1 = int(icon.top_left.x * scale_x)
+        y1 = int(icon.top_left.y * scale_y)
+        x2 = int(icon.bottom_right.x * scale_x)
+        y2 = int(icon.bottom_right.y * scale_y)
+        
+        # 検出結果に応じて色を変更
+        if detected:
+            color = QColor(255, 0, 0, 120)  # 赤色（検出あり）
+            border_color = QColor(255, 0, 0, 255)
+        else:
+            color = QColor(0, 255, 0, 80)  # 緑色（検出なし）
+            border_color = QColor(0, 255, 0, 200)
+        
+        # 矩形を描画
+        painter.setBrush(color)
+        painter.setPen(QPen(border_color, 2))
+        painter.drawRect(x1, y1, x2-x1, y2-y1)
+        
+        # パーツ名とステータスを描画
+        painter.setPen(QPen(Qt.white, 1))
+        painter.setFont(QFont("Arial", 10, QFont.Bold))
+        status_text = "ON" if detected else "OFF"
+        painter.drawText(x1 + 5, y1 + 15, f"{icon.name}: {status_text}")
+    
+    def draw_meter_overlay(self, painter, meter, value, scale_x, scale_y):
+        """メーターパーツのオーバーレイ描画"""
+        # 円の中心と半径をスケール変換
+        center_x = int(meter.center.x * scale_x)
+        center_y = int(meter.center.y * scale_y)
+        radius = int(meter.radius * min(scale_x, scale_y))
+        
+        # 円を描画
+        painter.setBrush(QColor(0, 100, 255, 60))
+        painter.setPen(QPen(QColor(0, 100, 255, 200), 2))
+        painter.drawEllipse(center_x - radius, center_y - radius, radius * 2, radius * 2)
+        
+        # 現在値に対応する針を描画
+        import math
+        angle = value * 2 * math.pi - math.pi / 2  # 0を上方向として角度計算
+        needle_end_x = center_x + int((radius - 10) * math.cos(angle))
+        needle_end_y = center_y + int((radius - 10) * math.sin(angle))
+        
+        painter.setPen(QPen(Qt.red, 3))
+        painter.drawLine(center_x, center_y, needle_end_x, needle_end_y)
+        
+        # パーツ名と値を描画
+        painter.setPen(QPen(Qt.white, 1))
+        painter.setFont(QFont("Arial", 10, QFont.Bold))
+        painter.drawText(center_x - 30, center_y + radius + 20, f"{meter.name}: {value:.2f}")
+    
+    def draw_ocr_overlay(self, painter, ocr, text, scale_x, scale_y):
+        """OCRパーツのオーバーレイ描画"""
+        # 矩形座標をスケール変換
+        x1 = int(ocr.top_left.x * scale_x)
+        y1 = int(ocr.top_left.y * scale_y)
+        x2 = int(ocr.bottom_right.x * scale_x)
+        y2 = int(ocr.bottom_right.y * scale_y)
+        
+        # 矩形を描画
+        painter.setBrush(QColor(255, 255, 0, 80))
+        painter.setPen(QPen(QColor(255, 255, 0, 200), 2))
+        painter.drawRect(x1, y1, x2-x1, y2-y1)
+        
+        # パーツ名とOCR結果を描画
+        painter.setPen(QPen(Qt.black, 1))
+        painter.setFont(QFont("Arial", 10, QFont.Bold))
+        display_text = text if text else "---"
+        painter.drawText(x1 + 5, y1 + 15, f"{ocr.name}: {display_text}")
+    
+    def display_monitor_image(self, pixmap):
+        """監視画像を表示"""
+        try:
+            if not self.image_label:
+                print("MONITOR: Error - image_label is None")
+                return
+            
+            # ラベルのサイズを確認
+            label_size = self.image_label.size()
+            print(f"MONITOR: Image label size: {label_size.width()} x {label_size.height()}")
+            
+            # ラベルサイズが小さすぎる場合は、親ウィジェットのサイズを使用
+            if label_size.width() < 100 or label_size.height() < 100:
+                # 親ウィジェットのサイズを取得
+                parent_size = self.size()
+                # 適切なサイズに調整（75%の幅、高さから他のウィジェット分を除く）
+                target_width = int(parent_size.width() * 0.75 * 0.9)  # 左側75%の90%
+                target_height = int(parent_size.height() * 0.7)  # 高さの70%
+                label_size = QSize(max(target_width, 400), max(target_height, 300))
+                print(f"MONITOR: Using adjusted size: {label_size.width()} x {label_size.height()}")
+            
+            # スケーリングして表示
+            scaled_pixmap = pixmap.scaled(
+                label_size, 
+                Qt.KeepAspectRatio, 
+                Qt.SmoothTransformation
+            )
+            print(f"MONITOR: Scaled pixmap to {scaled_pixmap.width()} x {scaled_pixmap.height()}")
+            
+            self.image_label.setPixmap(scaled_pixmap)
+            self.current_pixmap = pixmap
+            
+            # 解像度情報更新
+            self.update_resolution_display(pixmap)
+            print("MONITOR: Image label updated successfully")
+            
+        except Exception as e:
+            print(f"MONITOR: Error displaying image: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def update_resolution_display(self, pixmap):
+        """解像度表示更新"""
+        if pixmap:
+            width = pixmap.width()
+            height = pixmap.height()
+            self.fps_label.setText(f"FPS: {self.current_fps:.1f} | 解像度: {width} x {height}")
+    
+    def update_fps_display(self):
+        """FPS表示更新（1秒ごと）"""
+        if hasattr(self, 'fps_counter'):
+            self.current_fps = self.fps_counter
+            self.fps_counter = 0
+            
+            if self.current_pixmap:
+                self.update_resolution_display(self.current_pixmap)
+    
+    def update_detection_results(self, results_dict):
+        """パーツ検出結果を更新"""
+        self.detection_results = results_dict
+        self.update_results_display()
+    
+    def update_results_display(self):
+        """検出結果表示パネルを更新"""
+        # 既存のウィジェットをクリア
+        for i in reversed(range(self.results_layout.count())):
+            child = self.results_layout.itemAt(i).widget()
+            if child:
+                child.setParent(None)
+        
+        if not self.detection_results:
+            # 結果がない場合
+            no_results = QLabel("検出結果なし")
+            no_results.setStyleSheet("""
+                QLabel {
+                    color: #7f8c8d;
+                    font-size: 12px;
+                    text-align: center;
+                    margin: 20px 0;
+                }
+            """)
+            no_results.setAlignment(Qt.AlignCenter)
+            self.results_layout.addWidget(no_results)
+            return
+        
+        # 検出結果を表示
+        for part_name, result in self.detection_results.items():
+            result_widget = self.create_result_item(part_name, result)
+            self.results_layout.addWidget(result_widget)
+        
+        # スペーサーを追加
+        self.results_layout.addStretch()
+    
+    def create_result_item(self, part_name, result):
+        """個別の検出結果アイテムを作成"""
+        widget = QWidget()
+        widget.setStyleSheet("""
+            QWidget {
+                background-color: white;
+                border-radius: 6px;
+                margin: 2px 0;
+            }
+        """)
+        
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(4)
+        
+        # パーツ名
+        name_label = QLabel(part_name)
+        name_label.setStyleSheet("""
+            QLabel {
+                font-weight: bold;
+                font-size: 13px;
+                color: #2c3e50;
+            }
+        """)
+        layout.addWidget(name_label)
+        
+        # 結果値
+        if isinstance(result, bool):
+            # アイコン系（bool値）
+            status = "🔴 ON" if result else "🟢 OFF"
+            color = "#e74c3c" if result else "#27ae60"
+        elif isinstance(result, (int, float)):
+            # メーター系（数値）
+            status = f"📊 {result:.2f}"
+            color = "#3498db"
+        else:
+            # OCR系（文字列）
+            status = f"📝 {result}" if result else "📝 ---"
+            color = "#f39c12"
+        
+        result_label = QLabel(status)
+        result_label.setStyleSheet(f"""
+            QLabel {{
+                font-size: 12px;
+                color: {color};
+                background-color: rgba({int(color[1:3], 16)}, {int(color[3:5], 16)}, {int(color[5:7], 16)}, 0.1);
+                padding: 4px 8px;
+                border-radius: 4px;
+            }}
+        """)
+        layout.addWidget(result_label)
+        
+        return widget
 
 
 class VehicleMonitorEditor(QMainWindow):
@@ -3236,12 +3742,79 @@ class VehicleMonitorEditor(QMainWindow):
     
     def start_monitoring(self):
         """監視開始処理（STARTボタンの機能）"""
-        # TODO: 実際の監視開始ロジックを実装
-        self.statusBar().showMessage("監視を開始しました...")
-        print("監視プロセスを開始")
+        try:
+            print("MONITOR: Starting monitoring process...")
+            
+            # MONITORビューにMQTTサービスとvehicle.jsonデータを設定
+            if hasattr(self.config_view, 'mqtt_service'):
+                self.monitor_view.set_mqtt_service(self.config_view.mqtt_service)
+            
+            # vehicle.jsonデータを設定
+            if self.vehicle_data:
+                self.monitor_view.set_vehicle_data(self.vehicle_data)
+            
+            # 監視開始
+            self.monitor_view.start_monitoring()
+            
+            # ダミーデータで検出結果テスト（実際のシステムではREST APIまたはMQTTから取得）
+            self.simulate_detection_results()
+            
+            # ステータスバー更新
+            self.statusBar().showMessage("🟢 監視実行中 - パーツ検出結果をリアルタイム表示中")
+            
+        except Exception as e:
+            print(f"MONITOR: Failed to start monitoring: {e}")
+            self.statusBar().showMessage(f"❌ 監視開始エラー: {e}")
+    
+    def simulate_detection_results(self):
+        """ダミーの検出結果をシミュレート（テスト用）"""
+        import threading
+        import time
+        import random
+        
+        def update_detection_loop():
+            """検出結果を定期的に更新"""
+            while hasattr(self, 'monitoring_active') and self.monitoring_active:
+                try:
+                    # ダミーデータ生成
+                    results = {}
+                    
+                    if self.vehicle_data:
+                        # アイコンパーツ（bool値）
+                        for icon in self.vehicle_data.icon:
+                            results[icon.name] = random.choice([True, False])
+                        
+                        # メーターパーツ（float値）
+                        for meter in self.vehicle_data.meter:
+                            results[meter.name] = random.uniform(0.0, 1.0)
+                        
+                        # OCRパーツ（文字列）
+                        for ocr in self.vehicle_data.ocr:
+                            if ocr.type == "int":
+                                results[ocr.name] = str(random.randint(0, 99))
+                            else:
+                                results[ocr.name] = f"Value_{random.randint(1, 999)}"
+                    
+                    # 検出結果を更新
+                    self.monitor_view.update_detection_results(results)
+                    
+                    time.sleep(2)  # 2秒ごとに更新
+                    
+                except Exception as e:
+                    print(f"Detection simulation error: {e}")
+                    break
+        
+        # 監視フラグを設定して開始
+        self.monitoring_active = True
+        detection_thread = threading.Thread(target=update_detection_loop, daemon=True)
+        detection_thread.start()
     
     def switch_to_mode(self, mode: AppMode):
         """モード切り替え"""
+        # MONITORモードから他のモードに切り替える際は監視を停止
+        if self.current_mode == AppMode.MONITOR and mode != AppMode.MONITOR:
+            self.stop_monitoring()
+        
         self.current_mode = mode
         
         # メインコンテンツエリアをクリア
@@ -3270,6 +3843,25 @@ class VehicleMonitorEditor(QMainWindow):
         self.update_mode_display()
         self.update_navigation_buttons()  # ナビゲーションボタンを更新
         self.update_status_bar()
+    
+    def stop_monitoring(self):
+        """監視停止処理"""
+        try:
+            print("MONITOR: Stopping monitoring process...")
+            
+            # 監視フラグを無効化
+            if hasattr(self, 'monitoring_active'):
+                self.monitoring_active = False
+            
+            # MONITORビューの監視停止
+            self.monitor_view.stop_monitoring()
+            
+            # ステータスバー更新
+            self.statusBar().showMessage("⏸️ 監視停止")
+            
+        except Exception as e:
+            print(f"MONITOR: Failed to stop monitoring: {e}")
+            self.statusBar().showMessage(f"❌ 監視停止エラー: {e}")
     
     def setup_edit_mode(self):
         """EDITモードのセットアップ（CONFIGモードと同じレイアウト構造）"""
