@@ -9,7 +9,7 @@ import threading
 import time
 import base64
 from typing import Optional, Dict, Any, Callable
-from PySide6.QtCore import QObject, Signal, Slot, QMetaObject, Qt
+from PySide6.QtCore import QObject, Signal, Slot, QTimer
 
 try:
     import paho.mqtt.client as mqtt
@@ -93,7 +93,11 @@ class MQTTService(QObject):
     
     def subscribe_image_topic(self) -> bool:
         """画像トピックを購読"""
-        return self.subscribe("image")
+        # imageトピックと、デバッグのためにすべてのトピックを購読
+        image_result = self.subscribe("image")
+        debug_result = self.subscribe("#")  # すべてのトピックを購読
+        print(f"*** MQTT: Subscribed to 'image': {image_result}, all topics '#': {debug_result} ***")
+        return image_result
     
     def subscribe(self, topic: str) -> bool:
         """トピックを購読"""
@@ -144,7 +148,8 @@ class MQTTService(QObject):
                     print(f"*** Binary message, size: {len(msg.payload)} bytes ***")
             
             if msg.topic == "image":
-                # imageトピックは最小限のログに変更
+                # imageトピック受信をログ出力
+                print(f"*** MQTT: Received IMAGE topic with payload size: {len(msg.payload)} ***")
                 try:
                     # Raspberry Piから送信されるJSON形式のメッセージを処理
                     message_data = json.loads(msg.payload.decode())
@@ -153,13 +158,10 @@ class MQTTService(QObject):
                         image_data = message_data["image"]
                         # 画像データをスレッドセーフにシグナル送信
                         try:
-                            # メインスレッドでシグナル送信を実行
-                            QMetaObject.invokeMethod(
-                                self, 
-                                "_emit_image_signal", 
-                                Qt.QueuedConnection,
-                                image_data
-                            )
+                            # メインスレッドでシグナル送信を実行（QTimer使用）
+                            print(f"*** MQTT: Found image data, length: {len(image_data)} characters ***")
+                            self._queued_image_data = image_data
+                            QTimer.singleShot(0, self._emit_image_signal)
                         except RuntimeError as e:
                             # シグナル送信先が削除されている場合のエラーを無視
                             if "Signal source has been deleted" in str(e):
@@ -192,12 +194,15 @@ class MQTTService(QObject):
         """接続状態を確認（統一インターフェース）"""
         return self._is_connected
     
-    @Slot(str)
-    def _emit_image_signal(self, image_data: str):
+    @Slot()
+    def _emit_image_signal(self):
         """スレッドセーフな画像シグナル送信（メインスレッドで実行）"""
         try:
-            print("*** MQTT: Emitting image signal from main thread ***")
-            self.image_received.emit(image_data)
+            if hasattr(self, '_queued_image_data'):
+                image_data = self._queued_image_data
+                print("*** MQTT: Emitting image signal from main thread ***")
+                self.image_received.emit(image_data)
+                delattr(self, '_queued_image_data')
         except RuntimeError as e:
             print(f"*** MQTT: Error emitting image signal: {e} ***")
     
