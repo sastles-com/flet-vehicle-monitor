@@ -35,7 +35,36 @@ python main.py --config ./data/config.json
 python main.py --no-dialog
 ```
 
+## User Experience Flow
 
+### CONFIG → EDIT → MONITOR モードの体験フロー
+以下のフローに基づいてユーザー体験を設計・実装する：
+
+**CONFIGモード（ベンチ接続・カメラ調整）:**
+```
+１．アプリを全画面で起動
+２．WiFiを所望のベンチのものに接続
+３．間違えて読み込まないようにconfig.jsonの内容を空に初期化
+４．config.jsonを読み込むために自動でconfig.jsonファイルダイアログが表示
+５．接続したベンチに合わせたconfig.jsonファイルを指定して読み込み
+６．config.jsonをパースして、MQTTブローカーに接続
+７．imageトピックを購読して、プレビュー画面を読み込み、メイン画面に拡大表示
+８．カメラを搭載したraspiの位置を調整して、カメラのアングルを決定
+９．EDITモードで使いたい画角タイミングで、ヘッダのEDITボタンを押してeditモードへ移行
+```
+
+**EDIT移行時の自動処理:**
+```
+１０．モード移行時にconfig.jsonをMQTTに送信
+１１．そのあと、RestAPIでfull_imageを取得して編集開始
+```
+
+### 重要な設計ポイント
+- **デフォルトフォルダ**: C:\Users\table0\Desktop\config
+- **自動ファイルダイアログ**: 起動時に即座に表示
+- **リアルタイムプレビュー**: MQTTからのimageトピック購読
+- **カメラ調整**: ユーザーが画角を決定する時間を確保
+- **ベンチ切り替え**: 複数ベンチ間での効率的な作業フロー対応
 
 
 ## Development Philosophy
