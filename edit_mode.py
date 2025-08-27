@@ -2414,6 +2414,12 @@ class ConfigMainView(QWidget):
         self.load_config_btn.clicked.connect(self.load_config_file)
         layout.addWidget(self.load_config_btn)
         
+        # config.json編集フォーム（app.pyのConfigSidebarを参考）
+        self.config_form_fields = {}
+        self.config_form_group = self.create_config_form()
+        self.config_form_group.setVisible(False)  # 初期状態では非表示
+        layout.addWidget(self.config_form_group)
+        
         # 設定状態表示
         self.status_label = QLabel("⏳ config.json未読み込み\n\nデスクトップ/configフォルダから\n設定ファイルを選択してください")
         self.status_label.setStyleSheet("""
@@ -2447,6 +2453,201 @@ class ConfigMainView(QWidget):
         
         return panel
     
+    def create_config_form(self):
+        """config.json編集フォーム作成（app.pyのConfigSidebarを参考）"""
+        from PySide6.QtWidgets import QGroupBox, QLineEdit, QHBoxLayout, QFrame
+        
+        group = QGroupBox("📝 設定編集")
+        group.setStyleSheet("""
+            QGroupBox {
+                font-size: 14px;
+                font-weight: bold;
+                color: #4CAF50;
+                border: 2px solid #4CAF50;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+        """)
+        main_layout = QVBoxLayout()
+        
+        # MQTT設定セクション
+        mqtt_label = QLabel("🌐 MQTT設定")
+        mqtt_label.setStyleSheet("font-weight: bold; color: #333; font-size: 13px; margin-bottom: 5px;")
+        main_layout.addWidget(mqtt_label)
+        
+        # MQTT Host
+        self.config_form_fields['mqtt_host'] = QLineEdit()
+        self.config_form_fields['mqtt_host'].setMaximumWidth(200)
+        self.config_form_fields['mqtt_host'].setStyleSheet("""
+            QLineEdit {
+                padding: 6px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        
+        mqtt_host_layout = QHBoxLayout()
+        mqtt_host_label = QLabel("Host:")
+        mqtt_host_label.setStyleSheet("color: #333; min-width: 80px; font-size: 12px;")
+        mqtt_host_layout.addWidget(mqtt_host_label)
+        mqtt_host_layout.addWidget(self.config_form_fields['mqtt_host'])
+        mqtt_host_layout.addStretch()
+        main_layout.addLayout(mqtt_host_layout)
+        
+        # MQTT Port
+        self.config_form_fields['mqtt_port'] = QLineEdit()
+        self.config_form_fields['mqtt_port'].setMaximumWidth(200)
+        self.config_form_fields['mqtt_port'].setStyleSheet("""
+            QLineEdit {
+                padding: 6px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        
+        mqtt_port_layout = QHBoxLayout()
+        mqtt_port_label = QLabel("Port:")
+        mqtt_port_label.setStyleSheet("color: #333; min-width: 80px; font-size: 12px;")
+        mqtt_port_layout.addWidget(mqtt_port_label)
+        mqtt_port_layout.addWidget(self.config_form_fields['mqtt_port'])
+        mqtt_port_layout.addStretch()
+        main_layout.addLayout(mqtt_port_layout)
+        
+        # 区切り線
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        line.setStyleSheet("color: #ddd; margin: 8px 0;")
+        main_layout.addWidget(line)
+        
+        # RestAPI設定セクション
+        rest_label = QLabel("🔗 RestAPI設定")
+        rest_label.setStyleSheet("font-weight: bold; color: #333; font-size: 13px; margin-bottom: 5px; margin-top: 8px;")
+        main_layout.addWidget(rest_label)
+        
+        # RestAPI Host
+        self.config_form_fields['restapi_host'] = QLineEdit()
+        self.config_form_fields['restapi_host'].setMaximumWidth(200)
+        self.config_form_fields['restapi_host'].setStyleSheet("""
+            QLineEdit {
+                padding: 6px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        
+        rest_host_layout = QHBoxLayout()
+        rest_host_label = QLabel("Host:")
+        rest_host_label.setStyleSheet("color: #333; min-width: 80px; font-size: 12px;")
+        rest_host_layout.addWidget(rest_host_label)
+        rest_host_layout.addWidget(self.config_form_fields['restapi_host'])
+        rest_host_layout.addStretch()
+        main_layout.addLayout(rest_host_layout)
+        
+        # RestAPI Port
+        self.config_form_fields['restapi_port'] = QLineEdit()
+        self.config_form_fields['restapi_port'].setMaximumWidth(200)
+        self.config_form_fields['restapi_port'].setStyleSheet("""
+            QLineEdit {
+                padding: 6px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        
+        rest_port_layout = QHBoxLayout()
+        rest_port_label = QLabel("Port:")
+        rest_port_label.setStyleSheet("color: #333; min-width: 80px; font-size: 12px;")
+        rest_port_layout.addWidget(rest_port_label)
+        rest_port_layout.addWidget(self.config_form_fields['restapi_port'])
+        rest_port_layout.addStretch()
+        main_layout.addLayout(rest_port_layout)
+        
+        # 区切り線
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.HLine)
+        line2.setFrameShadow(QFrame.Sunken)
+        line2.setStyleSheet("color: #ddd; margin: 8px 0;")
+        main_layout.addWidget(line2)
+        
+        # ベンチ名設定
+        bench_label = QLabel("🏭 ベンチ情報")
+        bench_label.setStyleSheet("font-weight: bold; color: #333; font-size: 13px; margin-bottom: 5px; margin-top: 8px;")
+        main_layout.addWidget(bench_label)
+        
+        self.config_form_fields['bench_name'] = QLineEdit()
+        self.config_form_fields['bench_name'].setMaximumWidth(200)
+        self.config_form_fields['bench_name'].setStyleSheet("""
+            QLineEdit {
+                padding: 6px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        
+        bench_layout = QHBoxLayout()
+        bench_name_label = QLabel("ベンチ名:")
+        bench_name_label.setStyleSheet("color: #333; min-width: 80px; font-size: 12px;")
+        bench_layout.addWidget(bench_name_label)
+        bench_layout.addWidget(self.config_form_fields['bench_name'])
+        bench_layout.addStretch()
+        main_layout.addLayout(bench_layout)
+        
+        # 保存・再読み込みボタン
+        button_layout = QHBoxLayout()
+        
+        save_btn = QPushButton("💾 保存")
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        save_btn.clicked.connect(self.save_config_changes)
+        button_layout.addWidget(save_btn)
+        
+        reload_btn = QPushButton("🔄 再読み込み")
+        reload_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9800;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+        """)
+        reload_btn.clicked.connect(self.reload_current_config)
+        button_layout.addWidget(reload_btn)
+        
+        main_layout.addLayout(button_layout)
+        
+        group.setLayout(main_layout)
+        return group
+    
     def create_config_sidebar(self):
         """設定用サイドバー作成（QDockWidget使用）"""
         if not self.parent_window:
@@ -2475,19 +2676,7 @@ class ConfigMainView(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
         
-        # プレビュータイトル
-        preview_title = QLabel("📹 カメラライブプレビュー")
-        preview_title.setStyleSheet("""
-            QLabel {
-                font-size: 28px;
-                font-weight: bold;
-                color: #2196F3;
-                padding: 20px;
-                text-align: center;
-            }
-        """)
-        preview_title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(preview_title)
+        # プレビュータイトルは削除（よりコンパクトに）
         
         # 状態表示
         self.connection_status = QLabel("⏳ config.jsonを読み込んでMQTTに接続してください")
@@ -2520,38 +2709,6 @@ class ConfigMainView(QWidget):
         self.image_label.setScaledContents(True)
         layout.addWidget(self.image_label, 1)  # 拡張可能
         
-        # FPS・解像度表示
-        info_layout = QHBoxLayout()
-        
-        self.fps_label = QLabel("FPS: 0.0")
-        self.fps_label.setStyleSheet("""
-            QLabel {
-                font-size: 14px;
-                color: #495057;
-                padding: 8px 16px;
-                background-color: #e9ecef;
-                border-radius: 6px;
-                font-weight: bold;
-            }
-        """)
-        info_layout.addWidget(self.fps_label)
-        
-        self.resolution_label = QLabel("解像度: --")
-        self.resolution_label.setStyleSheet("""
-            QLabel {
-                font-size: 14px;
-                color: #495057;
-                padding: 8px 16px;
-                background-color: #e9ecef;
-                border-radius: 6px;
-                font-weight: bold;
-            }
-        """)
-        info_layout.addWidget(self.resolution_label)
-        
-        info_layout.addStretch()
-        layout.addLayout(info_layout)
-        
         return panel
     
     def create_preview_panel(self):
@@ -2559,19 +2716,7 @@ class ConfigMainView(QWidget):
         panel = QWidget()
         layout = QVBoxLayout(panel)
         
-        # プレビュータイトル
-        preview_title = QLabel("📹 カメラプレビュー（画角調整用）")
-        preview_title.setStyleSheet("""
-            QLabel {
-                font-size: 18px;
-                font-weight: bold;
-                color: #333;
-                padding: 8px;
-                text-align: center;
-            }
-        """)
-        preview_title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(preview_title)
+        # プレビュータイトルは削除（よりコンパクトに）
         
         # 画像表示エリア
         self.image_label = QLabel()
@@ -2587,19 +2732,6 @@ class ConfigMainView(QWidget):
         self.image_label.setText("MQTTに接続後、\nリアルタイム画像が表示されます\n\nカメラアングルを調整してください")
         self.image_label.setScaledContents(True)
         layout.addWidget(self.image_label)
-        
-        # FPS表示
-        self.fps_label = QLabel("FPS: 0.0")
-        self.fps_label.setStyleSheet("""
-            QLabel {
-                font-size: 12px;
-                color: #666;
-                padding: 4px 8px;
-                text-align: right;
-            }
-        """)
-        self.fps_label.setAlignment(Qt.AlignRight)
-        layout.addWidget(self.fps_label)
         
         return panel
     
@@ -2667,6 +2799,9 @@ class ConfigMainView(QWidget):
             with open(file_path, 'r', encoding='utf-8') as f:
                 self.config_data = json.load(f)
             
+            # ファイルパスを記録（保存・再読み込み用）
+            self.config_file_path = file_path
+            
             # ステータス更新
             bench_name = self.config_data.get("bench", "Unknown")
             mqtt_host = self.config_data.get("mqtt", {}).get("host", "Unknown")
@@ -2682,6 +2817,13 @@ class ConfigMainView(QWidget):
                     line-height: 1.4;
                 }
             """)
+            
+            # 設定フォームに値を読み込み
+            self.load_config_to_form(self.config_data)
+            
+            # 設定フォームを表示
+            if hasattr(self, 'config_form_group'):
+                self.config_form_group.setVisible(True)
             
             # ユーザー体験フロー: MQTTに接続してプレビュー開始
             self.connect_mqtt()
@@ -2701,6 +2843,89 @@ class ConfigMainView(QWidget):
                     line-height: 1.4;
                 }
             """)
+    
+    def load_config_to_form(self, config_data):
+        """設定データをフォームフィールドに読み込み"""
+        try:
+            # MQTT設定
+            if "mqtt" in config_data:
+                mqtt_config = config_data["mqtt"]
+                if 'mqtt_host' in self.config_form_fields:
+                    self.config_form_fields['mqtt_host'].setText(mqtt_config.get('host', ''))
+                if 'mqtt_port' in self.config_form_fields:
+                    self.config_form_fields['mqtt_port'].setText(str(mqtt_config.get('port', '')))
+            
+            # RestAPI設定
+            if "RestAPI" in config_data:
+                rest_config = config_data["RestAPI"]
+                if 'restapi_host' in self.config_form_fields:
+                    self.config_form_fields['restapi_host'].setText(rest_config.get('host', ''))
+                if 'restapi_port' in self.config_form_fields:
+                    self.config_form_fields['restapi_port'].setText(str(rest_config.get('port', '')))
+            
+            # ベンチ名
+            if 'bench_name' in self.config_form_fields:
+                self.config_form_fields['bench_name'].setText(config_data.get('bench', ''))
+            
+            print("CONFIG: Configuration loaded to form fields")
+            
+        except Exception as e:
+            print(f"CONFIG: Error loading config to form: {e}")
+    
+    def save_config_changes(self):
+        """フォームの変更をconfig.jsonファイルに保存"""
+        try:
+            if not hasattr(self, 'config_data') or not self.config_data:
+                print("CONFIG: No config data to save")
+                return
+            
+            # フォームの値を読み取って設定データを更新
+            if 'mqtt_host' in self.config_form_fields:
+                if 'mqtt' not in self.config_data:
+                    self.config_data['mqtt'] = {}
+                self.config_data['mqtt']['host'] = self.config_form_fields['mqtt_host'].text()
+            
+            if 'mqtt_port' in self.config_form_fields:
+                port_text = self.config_form_fields['mqtt_port'].text()
+                if port_text.isdigit():
+                    self.config_data['mqtt']['port'] = port_text
+            
+            if 'restapi_host' in self.config_form_fields:
+                if 'RestAPI' not in self.config_data:
+                    self.config_data['RestAPI'] = {}
+                self.config_data['RestAPI']['host'] = self.config_form_fields['restapi_host'].text()
+            
+            if 'restapi_port' in self.config_form_fields:
+                port_text = self.config_form_fields['restapi_port'].text()
+                if port_text.isdigit():
+                    self.config_data['RestAPI']['port'] = port_text
+            
+            if 'bench_name' in self.config_form_fields:
+                self.config_data['bench'] = self.config_form_fields['bench_name'].text()
+            
+            # config.jsonファイルに保存（元のファイルパスに保存）
+            if hasattr(self, 'config_file_path'):
+                import json
+                with open(self.config_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.config_data, f, ensure_ascii=False, indent=2)
+                print(f"CONFIG: Configuration saved to {self.config_file_path}")
+                
+                # ステータス更新で保存完了を表示
+                self.status_label.setText(f"💾 設定を保存しました\n\nファイル: {self.config_file_path}")
+            
+        except Exception as e:
+            print(f"CONFIG: Error saving config: {e}")
+    
+    def reload_current_config(self):
+        """現在のconfig.jsonファイルを再読み込み"""
+        try:
+            if hasattr(self, 'config_file_path'):
+                self.load_config_data(self.config_file_path)
+                print(f"CONFIG: Configuration reloaded from {self.config_file_path}")
+            else:
+                print("CONFIG: No config file path available for reload")
+        except Exception as e:
+            print(f"CONFIG: Error reloading config: {e}")
     
     def connect_mqtt(self):
         """MQTTブローカーに接続してimageトピック購読"""
@@ -2757,17 +2982,10 @@ class ConfigMainView(QWidget):
     
     def mqtt_connected(self):
         """MQTT接続完了処理"""
-        self.mqtt_status_label.setText("🟢 MQTT: 接続完了 - imageトピック購読中")
-        self.mqtt_status_label.setStyleSheet("""
-            QLabel {
-                font-size: 14px;
-                color: #4caf50;
-                padding: 8px 12px;
-                background-color: rgba(76, 175, 80, 0.1);
-                border-radius: 4px;
-                margin: 8px 0;
-            }
-        """)
+        # サイドバーのメッセージは削除、代わりにフッターのMQTTインジケーターを更新
+        # （親ウィンドウに通知して更新）
+        if self.main_window:
+            self.main_window.update_mqtt_status(True)
         
         # imageトピック購読開始
         self.mqtt_service.subscribe_image_topic()
@@ -2866,34 +3084,22 @@ class ConfigMainView(QWidget):
                 self.image_label.setPixmap(scaled_pixmap)
                 self.current_pixmap = pixmap
                 
-                # 解像度情報更新
-                if hasattr(self, 'resolution_label'):
-                    self.resolution_label.setText(f"解像度: {pixmap.width()}x{pixmap.height()}")
+                # 解像度情報更新（フッターに表示）
+                if hasattr(self, 'footer_resolution_label'):
+                    self.footer_resolution_label.setText(f"解像度: {pixmap.width()}x{pixmap.height()}")
                 
-                # 接続状態更新
-                if hasattr(self, 'connection_status'):
-                    self.connection_status.setText("✅ MQTTライブプレビュー表示中 - カメラ位置を調整してください")
-                    self.connection_status.setStyleSheet("""
-                        QLabel {
-                            font-size: 16px;
-                            color: #28a745;
-                            padding: 10px 20px;
-                            text-align: center;
-                            background-color: rgba(40, 167, 69, 0.1);
-                            border-radius: 8px;
-                            margin: 10px;
-                        }
-                    """)
+                # 接続状態は更新せず（よりコンパクトに）
                 
         except Exception as e:
             print(f"CONFIG: Error displaying image: {e}")
     
     def update_fps_display(self):
-        """FPS表示更新"""
-        if hasattr(self, 'current_fps') and self.current_fps > 0:
-            self.fps_label.setText(f"FPS: {self.current_fps:.1f}")
-        else:
-            self.fps_label.setText("FPS: 0.0")
+        """FPS表示更新（フッターに表示）"""
+        if hasattr(self, 'footer_fps_label'):
+            if hasattr(self, 'current_fps') and self.current_fps > 0:
+                self.footer_fps_label.setText(f"FPS: {self.current_fps:.1f}")
+            else:
+                self.footer_fps_label.setText("FPS: 0.0")
     
     def get_config_data(self):
         """設定データを取得（EDIT移行時に使用）"""
@@ -2961,20 +3167,6 @@ class MonitorMainView(QWidget):
         header_layout.addWidget(title_label)
         
         header_layout.addStretch()
-        
-        # FPS・解像度表示
-        self.fps_label = QLabel("FPS: 0.0 | 解像度: -- x --")
-        self.fps_label.setStyleSheet("""
-            QLabel {
-                font-size: 12px;
-                color: #7f8c8d;
-                margin: 0;
-                padding: 5px 10px;
-                background-color: rgba(52, 152, 219, 0.1);
-                border-radius: 4px;
-            }
-        """)
-        header_layout.addWidget(self.fps_label)
         
         layout.addWidget(header_widget)
         
@@ -3384,7 +3576,10 @@ class MonitorMainView(QWidget):
         if pixmap:
             width = pixmap.width()
             height = pixmap.height()
-            self.fps_label.setText(f"FPS: {self.current_fps:.1f} | 解像度: {width} x {height}")
+            # フッターのFPS・解像度ラベルを更新
+            if hasattr(self, 'footer_fps_label') and hasattr(self, 'footer_resolution_label'):
+                self.footer_fps_label.setText(f"FPS: {self.current_fps:.1f}")
+                self.footer_resolution_label.setText(f"解像度: {width} x {height}")
     
     def update_fps_display(self):
         """FPS表示更新（1秒ごと）"""
@@ -3493,7 +3688,7 @@ class VehicleMonitorEditor(QMainWindow):
         super().__init__()
         self.setWindowTitle("Vehicle Monitor - 3Mode System")
         self.setGeometry(100, 100, 1200, 800)
-        self.showMaximized()
+        self.showFullScreen()  # 全画面表示に変更
         
         # モード管理
         self.current_mode = AppMode.CONFIG
@@ -3581,23 +3776,29 @@ class VehicleMonitorEditor(QMainWindow):
         self.sidebar_btn.clicked.connect(self.toggle_sidebar)
         left_layout.addWidget(self.sidebar_btn)
         
-        # モード表示インジケータ
+        # モード表示インジケータ（アイコンのみ、よりコンパクト）
         self.mode_labels = {}
         mode_icons = {"CONFIG": "⚙️", "EDIT": "✏️", "MONITOR": "📊"}
         for mode in AppMode:
             icon = mode_icons.get(mode.value, "")
-            mode_label = QLabel(f"{icon} {mode.value}")
+            mode_label = QLabel(icon)
             mode_label.setStyleSheet("""
                 QLabel {
                     color: #bdc3c7;
-                    font-size: 14px;
+                    font-size: 18px;
                     font-weight: bold;
-                    padding: 6px 12px;
-                    margin: 0 3px;
+                    padding: 4px 8px;
+                    margin: 0 2px;
                     border-radius: 4px;
                     background-color: rgba(255,255,255,0.1);
+                    min-width: 32px;
+                    max-width: 32px;
+                    text-align: center;
                 }
             """)
+            mode_label.setAlignment(Qt.AlignCenter)
+            # ツールチップでモード名を表示
+            mode_label.setToolTip(f"{mode.value} MODE")
             self.mode_labels[mode] = mode_label
             left_layout.addWidget(mode_label)
         
@@ -3745,6 +3946,15 @@ class VehicleMonitorEditor(QMainWindow):
         self.ros2_indicator = QLabel("ROS2: 未接続")
         self.ros2_indicator.setStyleSheet("background-color: #e74c3c; color: white;")
         self.status_bar.addPermanentWidget(self.ros2_indicator)
+        
+        # FPS・解像度情報をフッターに追加
+        self.footer_fps_label = QLabel("FPS: 0.0")
+        self.footer_fps_label.setStyleSheet("background-color: #34495e; color: #ecf0f1; font-family: monospace;")
+        self.status_bar.addPermanentWidget(self.footer_fps_label)
+        
+        self.footer_resolution_label = QLabel("解像度: --")
+        self.footer_resolution_label.setStyleSheet("background-color: #34495e; color: #ecf0f1; font-family: monospace;")
+        self.status_bar.addPermanentWidget(self.footer_resolution_label)
         
         self.update_status_bar()
     
@@ -4157,6 +4367,11 @@ class VehicleMonitorEditor(QMainWindow):
                     }
                 """)
     
+    def update_mqtt_status(self, connected: bool):
+        """MQTTステータスを更新"""
+        self.mqtt_connected = connected
+        self.update_status_bar()
+    
     def update_status_bar(self):
         """ステータスバーを更新（デバッグ情報）"""
         # デバッグ情報とシステム情報
@@ -4166,8 +4381,11 @@ class VehicleMonitorEditor(QMainWindow):
         vehicle_name = self.vehicle_data.name if self.vehicle_data else "未選択"
         parts_count = len(self.canvas.shapes) if hasattr(self.canvas, 'shapes') else 0
         
+        # MQTTステータス
+        mqtt_status = "🟢 MQTT" if getattr(self, 'mqtt_connected', False) else "🔴 MQTT"
+        
         # 簡潔なデバッグ情報
-        debug_info = f"{current_icon} {self.current_mode.value} | 🚗 {vehicle_name} | 🔧 {parts_count}個"
+        debug_info = f"{current_icon} {self.current_mode.value} | {mqtt_status} | 🚗 {vehicle_name} | 🔧 {parts_count}個"
         
         # 画像情報
         if hasattr(self.canvas, 'original_pixmap') and self.canvas.original_pixmap:
