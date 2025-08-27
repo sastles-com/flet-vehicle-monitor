@@ -9,7 +9,7 @@ import threading
 import time
 import base64
 from typing import Optional, Dict, Any, Callable
-from PySide6.QtCore import QObject, Signal, Slot, QTimer
+from PySide6.QtCore import QObject, Signal, Slot
 
 try:
     import paho.mqtt.client as mqtt
@@ -151,28 +151,50 @@ class MQTTService(QObject):
                 # imageトピック受信をログ出力
                 print(f"*** MQTT: Received IMAGE topic with payload size: {len(msg.payload)} ***")
                 try:
-                    # Raspberry Piから送信されるJSON形式のメッセージを処理
+                    # JSON解析を試行
+                    print("*** MQTT: Attempting JSON decode of image payload ***")
                     message_data = json.loads(msg.payload.decode())
+                    print(f"*** MQTT: JSON decode successful, keys: {list(message_data.keys())} ***")
                     
+                    # 画像データの存在確認
                     if "image" in message_data and message_data["image"]:
                         image_data = message_data["image"]
+                        print(f"*** MQTT: Found image data, length: {len(image_data)} characters ***")
+                        print(f"*** MQTT: Image data starts with: {image_data[:50]}... ***")
+                        
+                        # 追加のメタデータログ
+                        if "width" in message_data and "height" in message_data:
+                            print(f"*** MQTT: Image dimensions: {message_data['width']}x{message_data['height']} ***")
+                        if "name" in message_data:
+                            print(f"*** MQTT: Image name: {message_data['name']} ***")
+                        
                         # 画像データをスレッドセーフにシグナル送信
                         try:
-                            # メインスレッドでシグナル送信を実行（QTimer使用）
-                            print(f"*** MQTT: Found image data, length: {len(image_data)} characters ***")
-                            self._queued_image_data = image_data
-                            QTimer.singleShot(0, self._emit_image_signal)
+                            # 直接シグナルを送信（Qt自体がスレッドセーフ）
+                            print("*** MQTT: Emitting image signal directly (Qt handles thread safety) ***")
+                            self.image_received.emit(image_data)
+                            print("*** MQTT: Direct signal emission completed ***")
                         except RuntimeError as e:
                             # シグナル送信先が削除されている場合のエラーを無視
                             if "Signal source has been deleted" in str(e):
                                 print("*** Warning: Signal receiver has been deleted, skipping image emission ***")
                             else:
+                                print(f"*** MQTT: Runtime error during signal scheduling: {e} ***")
                                 raise e
+                        except Exception as e:
+                            print(f"*** MQTT: Unexpected error during signal scheduling: {e} ***")
+                            raise e
                     else:
-                        print(f"*** CRITICAL: Invalid image message format ***")
+                        print(f"*** CRITICAL: Invalid image message format - missing 'image' key or empty data ***")
+                        print(f"*** Available keys: {list(message_data.keys()) if isinstance(message_data, dict) else 'Not a dict'} ***")
                         
                 except json.JSONDecodeError as e:
                     print(f"*** Image topic JSON decode error: {e} ***")
+                    print(f"*** Raw payload preview (first 200 chars): {msg.payload.decode()[:200]}... ***")
+                except Exception as e:
+                    print(f"*** Unexpected error during image processing: {e} ***")
+                    import traceback
+                    traceback.print_exc()
                     
         except Exception as e:
             print(f"*** MQTT message processing error: {e} ***")
@@ -194,17 +216,7 @@ class MQTTService(QObject):
         """接続状態を確認（統一インターフェース）"""
         return self._is_connected
     
-    @Slot()
-    def _emit_image_signal(self):
-        """スレッドセーフな画像シグナル送信（メインスレッドで実行）"""
-        try:
-            if hasattr(self, '_queued_image_data'):
-                image_data = self._queued_image_data
-                print("*** MQTT: Emitting image signal from main thread ***")
-                self.image_received.emit(image_data)
-                delattr(self, '_queued_image_data')
-        except RuntimeError as e:
-            print(f"*** MQTT: Error emitting image signal: {e} ***")
+# _emit_image_signal メソッドは直接シグナル送信に変更のため削除
     
     def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False) -> bool:
         """MQTTメッセージを送信"""

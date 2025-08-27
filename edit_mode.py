@@ -2605,8 +2605,25 @@ class ConfigMainView(QWidget):
     
     def auto_show_config_dialog(self):
         """ユーザー体験フロー: 起動時に自動でconfig.jsonダイアログ表示"""
-        print("CONFIG MODE: 自動でconfig.jsonファイルダイアログを表示します")
-        self.load_config_file()
+        # テスト用: config-40.jsonが存在すれば自動読み込み
+        default_config_path = r"C:\Users\table0\Desktop\config\config-40.json"
+        import os
+        if os.path.exists(default_config_path):
+            print(f"CONFIG MODE: Auto-loading config-40.json for testing: {default_config_path}")
+            self.load_specific_config_file(default_config_path)
+        else:
+            print("CONFIG MODE: 自動でconfig.jsonファイルダイアログを表示します")
+            self.load_config_file()
+    
+    def load_specific_config_file(self, file_path: str):
+        """指定されたconfig.jsonファイルを読み込み（テスト用）"""
+        try:
+            print(f"CONFIG: Auto-loading specific config file: {file_path}")
+            self.load_config_data(file_path)
+        except Exception as e:
+            print(f"CONFIG: Error loading config file {file_path}: {e}")
+            # エラーの場合は通常のダイアログにフォールバック
+            self.load_config_file()
     
     def load_config_file(self):
         """config.jsonファイル読み込み（デフォルト：デスクトップ/config）"""
@@ -2767,14 +2784,30 @@ class ConfigMainView(QWidget):
         """MQTT画像データ受信時の処理（メインスレッドで実行）"""
         try:
             import threading
-            print(f"CONFIG: Received image in thread: {threading.current_thread().name}")
+            print(f"CONFIG: *** on_image_received called in thread: {threading.current_thread().name} ***")
+            print(f"CONFIG: *** Received base64 image data, length: {len(base64_image)} characters ***")
+            print(f"CONFIG: *** Base64 data starts with: {base64_image[:50]}... ***")
             
             # base64データをデコード
+            print("CONFIG: *** Attempting base64 decode ***")
             image_data = base64.b64decode(base64_image)
+            print(f"CONFIG: *** Base64 decode successful, binary size: {len(image_data)} bytes ***")
             
             # QPixmapに変換
+            print("CONFIG: *** Creating QPixmap and attempting loadFromData ***")
             pixmap = QPixmap()
+            
+            # PNG形式のヘッダーを確認
+            if image_data.startswith(b'\x89PNG'):
+                print("CONFIG: *** Image data is PNG format ***")
+            elif image_data.startswith(b'\xff\xd8\xff'):
+                print("CONFIG: *** Image data is JPEG format ***")
+            else:
+                print(f"CONFIG: *** Unknown image format, starts with: {image_data[:10].hex()} ***")
+            
             if pixmap.loadFromData(image_data):
+                print(f"CONFIG: *** QPixmap creation successful, size: {pixmap.width()}x{pixmap.height()} ***")
+                
                 # FPS計算
                 current_time = time.time()
                 if hasattr(self, 'last_frame_time'):
@@ -2784,10 +2817,37 @@ class ConfigMainView(QWidget):
                 self.last_frame_time = current_time
                 
                 # 画像表示（プレビューエリアにフィット）
+                print("CONFIG: *** Calling display_preview_image ***")
                 self.display_preview_image(pixmap)
+                print("CONFIG: *** display_preview_image completed ***")
                 
             else:
-                print("CONFIG: Failed to load image from MQTT data")
+                print("CONFIG: *** CRITICAL: Failed to load image from MQTT data - QPixmap.loadFromData() failed ***")
+                print(f"CONFIG: *** Binary data size: {len(image_data)} bytes ***")
+                
+                # 代替手段: PILで試行
+                try:
+                    from PIL import Image
+                    from io import BytesIO
+                    print("CONFIG: *** Attempting PIL Image.open as fallback ***")
+                    
+                    pil_image = Image.open(BytesIO(image_data))
+                    print(f"CONFIG: *** PIL image opened successfully: {pil_image.size}, mode: {pil_image.mode} ***")
+                    
+                    # PIL -> QPixmap変換
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                        pil_image.save(tmp_file.name, 'PNG')
+                        if pixmap.load(tmp_file.name):
+                            print("CONFIG: *** PIL -> QPixmap conversion successful ***")
+                            self.display_preview_image(pixmap)
+                        else:
+                            print("CONFIG: *** PIL -> QPixmap conversion failed ***")
+                    import os
+                    os.unlink(tmp_file.name)
+                    
+                except Exception as pil_e:
+                    print(f"CONFIG: *** PIL fallback also failed: {pil_e} ***")
                 
         except Exception as e:
             print(f"CONFIG: Error processing MQTT image: {e}")
@@ -3093,16 +3153,28 @@ class MonitorMainView(QWidget):
         """MQTT画像データ受信時の処理（CONFIGと同様だが、パーツ検出処理も追加）（メインスレッドで実行）"""
         try:
             import threading
-            print(f"MONITOR: Received image in thread: {threading.current_thread().name}")
+            print(f"MONITOR: *** on_image_received called in thread: {threading.current_thread().name} ***")
+            print(f"MONITOR: *** Received base64 image data, length: {len(base64_image)} characters ***")
             
             # base64データをデコード
+            print("MONITOR: *** Attempting base64 decode ***")
             image_data = base64.b64decode(base64_image)
-            print(f"MONITOR: Decoded image data size: {len(image_data)} bytes")
+            print(f"MONITOR: *** Base64 decode successful, binary size: {len(image_data)} bytes ***")
             
             # QPixmapに変換
+            print("MONITOR: *** Creating QPixmap and attempting loadFromData ***")
             pixmap = QPixmap()
+            
+            # PNG形式のヘッダーを確認
+            if image_data.startswith(b'\x89PNG'):
+                print("MONITOR: *** Image data is PNG format ***")
+            elif image_data.startswith(b'\xff\xd8\xff'):
+                print("MONITOR: *** Image data is JPEG format ***")
+            else:
+                print(f"MONITOR: *** Unknown image format, starts with: {image_data[:10].hex()} ***")
+            
             if pixmap.loadFromData(image_data):
-                print(f"MONITOR: Created pixmap {pixmap.width()}x{pixmap.height()}")
+                print(f"MONITOR: *** QPixmap creation successful, size: {pixmap.width()}x{pixmap.height()} ***")
                 
                 # FPS計算
                 current_time = time.time()
@@ -3114,15 +3186,43 @@ class MonitorMainView(QWidget):
                 self.fps_counter += 1
                 
                 # 画像にパーツ検出結果をオーバーレイ
+                print("MONITOR: *** Adding detection overlay ***")
                 annotated_pixmap = self.add_detection_overlay(pixmap)
-                print(f"MONITOR: Added detection overlay")
+                print("MONITOR: *** Detection overlay added ***")
                 
                 # 画像を表示
+                print("MONITOR: *** Calling display_monitor_image ***")
                 self.display_monitor_image(annotated_pixmap)
-                print("MONITOR: Image displayed successfully")
+                print("MONITOR: *** display_monitor_image completed ***")
                 
             else:
-                print("MONITOR: Failed to load pixmap from image data")
+                print("MONITOR: *** CRITICAL: Failed to load pixmap from image data - QPixmap.loadFromData() failed ***")
+                print(f"MONITOR: *** Binary data size: {len(image_data)} bytes ***")
+                
+                # 代替手段: PILで試行
+                try:
+                    from PIL import Image
+                    from io import BytesIO
+                    print("MONITOR: *** Attempting PIL Image.open as fallback ***")
+                    
+                    pil_image = Image.open(BytesIO(image_data))
+                    print(f"MONITOR: *** PIL image opened successfully: {pil_image.size}, mode: {pil_image.mode} ***")
+                    
+                    # PIL -> QPixmap変換
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                        pil_image.save(tmp_file.name, 'PNG')
+                        if pixmap.load(tmp_file.name):
+                            print("MONITOR: *** PIL -> QPixmap conversion successful ***")
+                            annotated_pixmap = self.add_detection_overlay(pixmap)
+                            self.display_monitor_image(annotated_pixmap)
+                        else:
+                            print("MONITOR: *** PIL -> QPixmap conversion failed ***")
+                    import os
+                    os.unlink(tmp_file.name)
+                    
+                except Exception as pil_e:
+                    print(f"MONITOR: *** PIL fallback also failed: {pil_e} ***")
                 
         except Exception as e:
             print(f"MONITOR: Error processing image: {e}")
