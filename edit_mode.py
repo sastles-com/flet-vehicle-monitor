@@ -4312,9 +4312,13 @@ class VehicleMonitorEditor(QMainWindow):
         self.main_content_area.layout().addWidget(self.canvas)
         self.canvas.show()
         
-        # サイドパネルを表示（EDITモード専用操作パネル）
+        # EDITモードでは右のパーツリストを表示、左サイドバーは非表示
         if hasattr(self, 'side_panel'):
             self.side_panel.show()
+        
+        # CONFIGモードの左サイドバー（config_dock）を非表示
+        if hasattr(self.config_view, 'config_dock') and self.config_view.config_dock:
+            self.config_view.config_dock.hide()
     
     
     def next_mode(self):
@@ -4384,16 +4388,26 @@ class VehicleMonitorEditor(QMainWindow):
             
             # フルサイズ画像を表示
             if image_data:
-                # テスト用: データから一時ファイルに保存して読み込み
-                import tempfile
-                import os
-                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
-                    tmp_file.write(image_data)
-                    tmp_path = tmp_file.name
-                
-                self.canvas.load_image(tmp_path)
-                # 一時ファイルを削除
-                os.unlink(tmp_path)
+                print(f"✅ Step 11 完了: RestAPIからfull_image取得成功（{len(image_data)} bytes）")
+                try:
+                    # RestAPI画像データから一時ファイル作成してEDITモードに表示
+                    import tempfile
+                    import os
+                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                        tmp_file.write(image_data)
+                        tmp_path = tmp_file.name
+                    
+                    print(f"EDITモード画面にフルサイズ画像を表示: {tmp_path}")
+                    self.canvas.load_image(tmp_path)
+                    
+                    # 一時ファイルを削除
+                    os.unlink(tmp_path)
+                    print("✅ EDITモードでRestAPI取得フルサイズ画像表示完了")
+                    
+                except Exception as e:
+                    print(f"❌ フルサイズ画像表示エラー: {e}")
+            else:
+                print("⚠️ RestAPI full_image取得失敗、EDITモードは画像なしで開始")
             
             # EDITモードに切り替え
             self.switch_to_mode(AppMode.EDIT)
@@ -4475,21 +4489,29 @@ class VehicleMonitorEditor(QMainWindow):
             full_image_url = f"http://{rest_api_host}:{rest_api_port}/full_image"
             print(f"RestAPI取得先: {full_image_url}")
             
-            # TODO: 実際のREST API呼び出し実装
-            # 暫定実装（テスト用の固定パス）
-            test_image_path = r"C:\Users\table0\Desktop\Vehicles\vehicle.json"  # vehicle.jsonと同じフォルダの画像
-            test_image_dir = os.path.dirname(test_image_path)
+            # RestAPIからfull_imageを取得
+            import requests
             
-            # テスト用画像ファイルを探す
-            for ext in ['.jpg', '.jpeg', '.png', '.bmp']:
-                test_file = os.path.join(test_image_dir, f"test_image{ext}")
-                if os.path.exists(test_file):
-                    print(f"テスト用画像を使用: {test_file}")
-                    with open(test_file, 'rb') as f:
-                        return f.read()
-            
-            print("⚠️  テスト用画像が見つかりません（full_image取得スキップ）")
-            return None
+            try:
+                print(f"RestAPI full_image取得開始: {full_image_url}")
+                response = requests.get(full_image_url, timeout=15)
+                response.raise_for_status()
+                
+                print(f"✅ RestAPI full_image取得成功: {len(response.content)} bytes")
+                return response.content
+                
+            except requests.exceptions.Timeout:
+                print("❌ RestAPI full_image取得タイムアウト（15秒）")
+                return None
+            except requests.exceptions.ConnectionError:
+                print(f"❌ RestAPI接続エラー: {rest_api_host}:{rest_api_port} に接続できません")
+                return None
+            except requests.exceptions.HTTPError as e:
+                print(f"❌ RestAPI HTTPエラー: {e.response.status_code} - {e}")
+                return None
+            except Exception as e:
+                print(f"❌ RestAPI予期しないエラー: {e}")
+                return None
             
         except Exception as e:
             print(f"RestAPI取得エラー: {e}")
@@ -4971,22 +4993,83 @@ class VehicleMonitorEditor(QMainWindow):
         category_layout.addWidget(self.custom_checkbox)
         category_group.setLayout(category_layout)
         
+        # Vehicle.json読み込みボタン
+        vehicle_load_btn = QPushButton("📁 Vehicle.json読み込み")
+        vehicle_load_btn.clicked.connect(self.load_vehicle_file_dialog)
+        vehicle_load_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                padding: 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+            QPushButton:pressed {
+                background-color: #21618c;
+            }
+        """)
+        
         # パーツリストツリー
         self.parts_tree = QTreeWidget()
         self.parts_tree.setHeaderLabels(["名前", "カテゴリ", "タイプ"])
         self.parts_tree.itemClicked.connect(self.on_tree_item_clicked)
+        # パーツリストを縦方向に最大限拡張
+        self.parts_tree.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         # レイアウトに追加
         panel_layout.addWidget(category_group)
+        panel_layout.addWidget(vehicle_load_btn)
         panel_layout.addWidget(QLabel("パーツリスト:"))
         panel_layout.addWidget(self.parts_tree)
-        panel_layout.addStretch()
+        # addStretchを削除してパーツリストを最下段まで拡張
         
         self.side_panel.setWidget(panel_widget)
         self.addDockWidget(Qt.RightDockWidgetArea, self.side_panel)
         
-        # 初期幅を設定
+        # 初期幅を設定、高さは画面いっぱいまで表示
         self.side_panel.setFixedWidth(300)
+        # 高さ制限を解除して画面下いっぱいまで表示
+        self.side_panel.setMaximumHeight(16777215)  # Qt最大値
+        self.side_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+    
+    def load_vehicle_file_dialog(self):
+        """Vehicle.jsonファイルダイアログを表示"""
+        try:
+            default_folder = r"C:\Users\table0\Desktop\Vehicles"
+            
+            # デフォルトフォルダが存在しない場合は作成
+            import os
+            if not os.path.exists(default_folder):
+                try:
+                    os.makedirs(default_folder, exist_ok=True)
+                    print(f"Created default vehicle folder: {default_folder}")
+                except Exception as e:
+                    print(f"Could not create vehicle folder: {e}")
+                    default_folder = "."
+            
+            print(f"EDIT: Opening vehicle.json file dialog with default: {default_folder}")
+            
+            from PySide6.QtWidgets import QFileDialog
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Vehicle JSONファイルを選択",
+                default_folder,
+                "JSON Files (*.json);;All Files (*)"
+            )
+            
+            if file_path:
+                print(f"EDIT: Loading vehicle file: {file_path}")
+                self.load_vehicle_file(file_path)
+            else:
+                print("EDIT: Vehicle file dialog cancelled")
+                
+        except Exception as e:
+            print(f"EDIT: Error opening vehicle file dialog: {e}")
     
     def toggle_category_visibility(self, category: ShapeCategory):
         """カテゴリの表示/非表示を切り替え"""
