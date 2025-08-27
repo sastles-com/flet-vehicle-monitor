@@ -138,8 +138,8 @@ class MQTTService(QObject):
     def _on_message(self, client, userdata, msg):
         """MQTT メッセージ受信時のコールバック"""
         try:
-            # image以外のトピックのメッセージを重点的にログ表示
-            if msg.topic != "image":
+            # image/response/data以外のトピックのメッセージのみログ表示
+            if msg.topic not in ["image", "response", "data"]:
                 print(f"*** MQTT message received on topic: '{msg.topic}' ***")
                 print(f"*** Message payload size: {len(msg.payload)} bytes ***")
                 try:
@@ -149,36 +149,22 @@ class MQTTService(QObject):
                     print(f"*** Binary message, size: {len(msg.payload)} bytes ***")
             
             if msg.topic == "image":
-                # imageトピック受信をログ出力
-                print(f"*** MQTT: Received IMAGE topic with payload size: {len(msg.payload)} ***")
                 try:
                     # JSON解析を試行
-                    print("*** MQTT: Attempting JSON decode of image payload ***")
                     message_data = json.loads(msg.payload.decode())
-                    print(f"*** MQTT: JSON decode successful, keys: {list(message_data.keys())} ***")
                     
                     # 画像データの存在確認
                     if "image" in message_data and message_data["image"]:
                         image_data = message_data["image"]
-                        print(f"*** MQTT: Found image data, length: {len(image_data)} characters ***")
-                        print(f"*** MQTT: Image data starts with: {image_data[:50]}... ***")
-                        
-                        # 追加のメタデータログ
-                        if "width" in message_data and "height" in message_data:
-                            print(f"*** MQTT: Image dimensions: {message_data['width']}x{message_data['height']} ***")
-                        if "name" in message_data:
-                            print(f"*** MQTT: Image name: {message_data['name']} ***")
                         
                         # 画像データをスレッドセーフにシグナル送信
                         try:
                             # 直接シグナルを送信（Qt自体がスレッドセーフ）
-                            print("*** MQTT: Emitting image signal directly (Qt handles thread safety) ***")
                             self.image_received.emit(image_data)
-                            print("*** MQTT: Direct signal emission completed ***")
                         except RuntimeError as e:
                             # シグナル送信先が削除されている場合のエラーを無視
                             if "Signal source has been deleted" in str(e):
-                                print("*** Warning: Signal receiver has been deleted, skipping image emission ***")
+                                pass  # 無視
                             else:
                                 print(f"*** MQTT: Runtime error during signal scheduling: {e} ***")
                                 raise e
@@ -187,11 +173,9 @@ class MQTTService(QObject):
                             raise e
                     else:
                         print(f"*** CRITICAL: Invalid image message format - missing 'image' key or empty data ***")
-                        print(f"*** Available keys: {list(message_data.keys()) if isinstance(message_data, dict) else 'Not a dict'} ***")
                         
                 except json.JSONDecodeError as e:
                     print(f"*** Image topic JSON decode error: {e} ***")
-                    print(f"*** Raw payload preview (first 200 chars): {msg.payload.decode()[:200]}... ***")
                 except Exception as e:
                     print(f"*** Unexpected error during image processing: {e} ***")
                     import traceback
@@ -200,16 +184,12 @@ class MQTTService(QObject):
             elif msg.topic == "response":
                 # responseトピック受信処理（ROS2生存確認）
                 try:
-                    print("*** MQTT: Received RESPONSE topic ***")
                     message_data = json.loads(msg.payload.decode())
-                    print(f"*** MQTT: Response data: {message_data} ***")
                     
                     # ROS2生存確認
                     if "alive" in message_data and message_data["alive"] is True:
-                        print("*** MQTT: ROS2 alive signal detected ***")
                         # ROS2応答シグナル送信
                         self.ros2_alive_received.emit()
-                        print("*** MQTT: ROS2 alive signal emitted ***")
                     
                 except json.JSONDecodeError as e:
                     print(f"*** Response topic JSON decode error: {e} ***")

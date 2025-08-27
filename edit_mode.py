@@ -2344,7 +2344,8 @@ class ConfigMainView(QWidget):
         self.setup_ui()
         
         # ユーザー体験フロー: 起動時に自動でconfig.jsonダイアログを表示
-        QTimer.singleShot(500, self.auto_show_config_dialog)
+        # 注意: VehicleMonitorEditorで制御するため、ここではコメントアウト
+        # QTimer.singleShot(500, self.auto_show_config_dialog)
     
     def setup_ui(self):
         """UI設定（サイドバー+メインプレビュー構成）"""
@@ -2947,7 +2948,6 @@ class ConfigMainView(QWidget):
     @Slot()
     def on_ros2_alive_received(self):
         """ROS2応答受信時の処理"""
-        print("CONFIG: ROS2 alive signal received")
         if hasattr(self, 'parent_window') and self.parent_window:
             self.parent_window.update_ros2_status(True)
     
@@ -2955,31 +2955,13 @@ class ConfigMainView(QWidget):
     def on_image_received(self, base64_image: str):
         """MQTT画像データ受信時の処理（メインスレッドで実行）"""
         try:
-            import threading
-            print(f"CONFIG: *** on_image_received called in thread: {threading.current_thread().name} ***")
-            print(f"CONFIG: *** Received base64 image data, length: {len(base64_image)} characters ***")
-            print(f"CONFIG: *** Base64 data starts with: {base64_image[:50]}... ***")
-            
             # base64データをデコード
-            print("CONFIG: *** Attempting base64 decode ***")
             image_data = base64.b64decode(base64_image)
-            print(f"CONFIG: *** Base64 decode successful, binary size: {len(image_data)} bytes ***")
             
             # QPixmapに変換
-            print("CONFIG: *** Creating QPixmap and attempting loadFromData ***")
             pixmap = QPixmap()
             
-            # PNG形式のヘッダーを確認
-            if image_data.startswith(b'\x89PNG'):
-                print("CONFIG: *** Image data is PNG format ***")
-            elif image_data.startswith(b'\xff\xd8\xff'):
-                print("CONFIG: *** Image data is JPEG format ***")
-            else:
-                print(f"CONFIG: *** Unknown image format, starts with: {image_data[:10].hex()} ***")
-            
             if pixmap.loadFromData(image_data):
-                print(f"CONFIG: *** QPixmap creation successful, size: {pixmap.width()}x{pixmap.height()} ***")
-                
                 # FPS計算
                 current_time = time.time()
                 if hasattr(self, 'last_frame_time'):
@@ -2989,9 +2971,7 @@ class ConfigMainView(QWidget):
                 self.last_frame_time = current_time
                 
                 # 画像表示（プレビューエリアにフィット）
-                print("CONFIG: *** Calling display_preview_image ***")
                 self.display_preview_image(pixmap)
-                print("CONFIG: *** display_preview_image completed ***")
                 
             else:
                 print("CONFIG: *** CRITICAL: Failed to load image from MQTT data - QPixmap.loadFromData() failed ***")
@@ -3666,6 +3646,9 @@ class VehicleMonitorEditor(QMainWindow):
         self.config_view = ConfigMainView(self)
         self.monitor_view = MonitorMainView()
         
+        # ConfigMainViewの既存MQTTサービスを使用（重複回避）
+        self.mqtt_service = self.config_view.mqtt_service
+        
         # UIをセットアップ
         self.setup_ui()
         
@@ -3680,6 +3663,9 @@ class VehicleMonitorEditor(QMainWindow):
         
         # UI初期化完了後に最大化を実行（タイミング問題修正）
         QTimer.singleShot(100, self.showMaximized)
+        
+        # 起動時にファイルダイアログを表示（デバッグモード解除）
+        QTimer.singleShot(500, self.show_startup_config_dialog)
         
     def keyPressEvent(self, event):
         """キーイベントハンドラ - F11で全画面切り替え、ESCで全画面解除"""
@@ -3823,7 +3809,6 @@ class VehicleMonitorEditor(QMainWindow):
             # タイムアウトタイマーをリセット
             if hasattr(self, 'ros2_timeout_timer') and self.ros2_timeout_timer:
                 self.ros2_timeout_timer.start(3000)  # 3秒でタイムアウト
-                print("ROS2: Alive signal received, timeout timer reset (3 seconds)")
         else:
             print("ROS2: Status updated to disconnected")
             if hasattr(self, 'ros2_indicator'):
@@ -4354,6 +4339,7 @@ class VehicleMonitorEditor(QMainWindow):
     def transition_to_edit_mode(self):
         """CONFIG→EDIT遷移時のデータ受け渡し（ユーザー体験フロー対応）"""
         try:
+            print("=== CONFIG→EDIT遷移が開始されました ===")
             print("CONFIG→EDIT移行: ユーザー体験フローを実行中...")
             
             # CONFIGモードからconfig.jsonデータを取得
@@ -4366,7 +4352,11 @@ class VehicleMonitorEditor(QMainWindow):
                 return
             
             # ユーザー体験フロー: Step 10 - config.jsonをMQTTに送信
-            self.send_config_to_mqtt(config_data)
+            mqtt_success = self.send_config_to_mqtt(config_data)
+            if mqtt_success:
+                print("✅ Step 10 完了: config.json送信成功")
+            else:
+                print("⚠️ Step 10 警告: config.json送信失敗（継続）")
             
             # ユーザー体験フロー: Step 11 - RestAPIでfull_imageを取得
             image_data = self.get_full_image_from_rest_api(config_data)
@@ -4417,27 +4407,57 @@ class VehicleMonitorEditor(QMainWindow):
             print(f"CONFIG→EDIT遷移エラー: {e}")
             self.switch_to_mode(AppMode.EDIT)  # エラーでもEDITモードに切り替え
     
+    def show_startup_config_dialog(self):
+        """起動時にconfig.jsonファイルダイアログを表示"""
+        try:
+            if hasattr(self.config_view, 'load_config_file'):
+                print("起動時config.jsonファイル選択ダイアログを表示中...")
+                self.config_view.load_config_file()
+            else:
+                print("ConfigView.load_config_file()が見つかりません")
+        except Exception as e:
+            print(f"起動時ファイルダイアログエラー: {e}")
+    
     def send_config_to_mqtt(self, config_data: dict):
         """ユーザー体験フロー Step 10: config.jsonをMQTTに送信"""
         try:
-            print("Step 10: config.jsonをMQTTに送信中...")
+            print("=== Step 10: config.jsonをMQTTに送信開始 ===")
+            print(f"MQTT service available: {self.mqtt_service is not None}")
+            if self.mqtt_service:
+                print(f"MQTT service type: {type(self.mqtt_service)}")
+            else:
+                print("ERROR: MQTTサービスがNoneです")
             
-            # TODO: 実際のMQTT送信実装
-            # 暫定実装
-            mqtt_host = config_data.get("mqtt", {}).get("host", "")
-            bench_name = config_data.get("bench", "Unknown")
+            if not self.mqtt_service or not hasattr(self.mqtt_service, 'is_connected'):
+                print("MQTTサービスが利用できません")
+                return False
             
-            print(f"MQTT送信先: {mqtt_host}")
-            print(f"送信データ: ベンチ={bench_name}, カメラ設定={config_data.get('camera', {})}")
+            print(f"MQTT connected: {self.mqtt_service.is_connected()}")
+            if not self.mqtt_service.is_connected():
+                print("MQTT接続が確立されていません")
+                return False
             
-            # シミュレーション
-            import time
-            time.sleep(0.5)  # 送信完了待機
+            # JSON文字列に変換
+            import json
+            config_json = json.dumps(config_data, ensure_ascii=False, separators=(',', ':'))
+            print(f"Config JSON prepared: {len(config_json)} chars")
+            print(f"Config JSON preview: {config_json[:200]}...")
             
-            print("✅ config.json送信完了")
+            # 'config' トピックに送信
+            print("Calling mqtt_service.publish...")
+            success = self.mqtt_service.publish("config", config_json, qos=1, retain=True)
             
+            print(f"Publish result: {success}")
+            if success:
+                print("✅ MQTT 'config' トピックに設定を送信しました")
+                return True
+            else:
+                print("MQTT設定送信に失敗しました")
+                return False
+                
         except Exception as e:
             print(f"MQTT送信エラー: {e}")
+            return False
     
     def get_full_image_from_rest_api(self, config_data: dict) -> Optional[bytes]:
         """ユーザー体験フロー Step 11: RestAPIでfull_imageを取得"""
