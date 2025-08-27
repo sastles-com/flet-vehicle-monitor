@@ -3651,6 +3651,24 @@ class VehicleMonitorEditor(QMainWindow):
         # 初期ナビゲーションボタン設定
         self.update_navigation_buttons()
         
+    def keyPressEvent(self, event):
+        """キーイベントハンドラ - F11で全画面切り替え、ESCで全画面解除"""
+        if event.key() == Qt.Key_F11:
+            # F11で全画面/最大化切り替え
+            if self.isFullScreen():
+                self.showMaximized()
+                print("F11: Switched to maximized window mode")
+            else:
+                self.showFullScreen()
+                print("F11: Switched to fullscreen mode")
+        elif event.key() == Qt.Key_Escape:
+            # ESCで全画面解除（最大化モードに戻る）
+            if self.isFullScreen():
+                self.showMaximized()
+                print("ESC: Exited fullscreen mode")
+        else:
+            super().keyPressEvent(event)
+        
     def setup_ui(self):
         """3モード対応UIセットアップ"""
         # メインウィジェットとレイアウト
@@ -4335,7 +4353,7 @@ class VehicleMonitorEditor(QMainWindow):
         parts_count = len(self.canvas.shapes) if hasattr(self.canvas, 'shapes') else 0
         
         # 簡潔なデバッグ情報（MQTTステータスはフッターのインジケータで表示）
-        debug_info = f"{current_icon} {self.current_mode.value} | 🚗 {vehicle_name} | 🔧 {parts_count}個"
+        debug_info = f"{current_icon} {self.current_mode.value} | 🚗 {vehicle_name} | 🔧 {parts_count}個 | F11:全画面"
         
         # 画像情報
         if hasattr(self.canvas, 'original_pixmap') and self.canvas.original_pixmap:
