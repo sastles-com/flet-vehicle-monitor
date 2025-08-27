@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QGraphicsView,
                                QTreeWidget, QTreeWidgetItem, QCheckBox,
                                QGroupBox, QScrollArea, QGraphicsLineItem,
                                QGraphicsPathItem, QSizePolicy)
-from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QSizeF, QTimer, QSize
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QSizeF, QTimer, QSize, Slot
 from PySide6.QtGui import QPixmap, QPen, QBrush, QColor, QWheelEvent, QPainter, QPainterPath, QFont
 import time
 import base64
@@ -2762,9 +2762,13 @@ class ConfigMainView(QWidget):
         
         print("CONFIG: MQTT connected - Ready for camera adjustment")
     
+    @Slot(str)
     def on_image_received(self, base64_image: str):
-        """MQTT画像データ受信時の処理"""
+        """MQTT画像データ受信時の処理（メインスレッドで実行）"""
         try:
+            import threading
+            print(f"CONFIG: Received image in thread: {threading.current_thread().name}")
+            
             # base64データをデコード
             image_data = base64.b64decode(base64_image)
             
@@ -3084,10 +3088,12 @@ class MonitorMainView(QWidget):
         
         print("MONITOR: Monitoring stopped")
     
+    @Slot(str)
     def on_image_received(self, base64_image: str):
-        """MQTT画像データ受信時の処理（CONFIGと同様だが、パーツ検出処理も追加）"""
+        """MQTT画像データ受信時の処理（CONFIGと同様だが、パーツ検出処理も追加）（メインスレッドで実行）"""
         try:
-            print("MONITOR: Received MQTT image data")
+            import threading
+            print(f"MONITOR: Received image in thread: {threading.current_thread().name}")
             
             # base64データをデコード
             image_data = base64.b64decode(base64_image)

@@ -9,7 +9,7 @@ import threading
 import time
 import base64
 from typing import Optional, Dict, Any, Callable
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, Slot, QMetaObject, Qt
 
 try:
     import paho.mqtt.client as mqtt
@@ -151,8 +151,21 @@ class MQTTService(QObject):
                     
                     if "image" in message_data and message_data["image"]:
                         image_data = message_data["image"]
-                        # 画像データをシグナルで送信（ログ出力は最小限）
-                        self.image_received.emit(image_data)
+                        # 画像データをスレッドセーフにシグナル送信
+                        try:
+                            # メインスレッドでシグナル送信を実行
+                            QMetaObject.invokeMethod(
+                                self, 
+                                "_emit_image_signal", 
+                                Qt.QueuedConnection,
+                                image_data
+                            )
+                        except RuntimeError as e:
+                            # シグナル送信先が削除されている場合のエラーを無視
+                            if "Signal source has been deleted" in str(e):
+                                print("*** Warning: Signal receiver has been deleted, skipping image emission ***")
+                            else:
+                                raise e
                     else:
                         print(f"*** CRITICAL: Invalid image message format ***")
                         
@@ -178,6 +191,15 @@ class MQTTService(QObject):
     def is_connected(self) -> bool:
         """接続状態を確認（統一インターフェース）"""
         return self._is_connected
+    
+    @Slot(str)
+    def _emit_image_signal(self, image_data: str):
+        """スレッドセーフな画像シグナル送信（メインスレッドで実行）"""
+        try:
+            print("*** MQTT: Emitting image signal from main thread ***")
+            self.image_received.emit(image_data)
+        except RuntimeError as e:
+            print(f"*** MQTT: Error emitting image signal: {e} ***")
     
     def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False) -> bool:
         """MQTTメッセージを送信"""
