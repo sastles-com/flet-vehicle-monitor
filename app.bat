@@ -13,5 +13,6 @@ echo Installing/updating dependencies...
 pip install -r requirements.txt
 
 echo Starting application...
-python app_modern.py
+echo CONFIG→EDIT遷移でマウスカーソル変更機能を実装済み
+python edit_mode.py --no-dialog
 call deactivate

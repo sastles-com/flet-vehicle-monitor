@@ -4319,6 +4319,10 @@ class VehicleMonitorEditor(QMainWindow):
         # CONFIGモードの左サイドバー（config_dock）を非表示
         if hasattr(self.config_view, 'config_dock') and self.config_view.config_dock:
             self.config_view.config_dock.hide()
+        
+        # EDITモード開始時に必ずカーソルを通常に戻す
+        from PySide6.QtCore import Qt
+        self.setCursor(Qt.ArrowCursor)
     
     
     def next_mode(self):
@@ -4345,6 +4349,10 @@ class VehicleMonitorEditor(QMainWindow):
         try:
             print("=== CONFIG→EDIT遷移が開始されました ===")
             print("CONFIG→EDIT移行: ユーザー体験フローを実行中...")
+            
+            # EDITボタン押下と同時にカーソルを読み込み中に変更
+            from PySide6.QtCore import Qt
+            self.setCursor(Qt.WaitCursor)
             
             # CONFIGモードからconfig.jsonデータを取得
             config_data = None
