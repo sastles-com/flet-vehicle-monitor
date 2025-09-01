@@ -548,6 +548,14 @@ class CenterControlPoint:
             # 移動後の位置を元座標に反映
             self.update_original_coordinates()
             
+            # 円形の場合：original_center座標も更新
+            if hasattr(self.parent_shape, 'original_center_x'):
+                item = self.parent_shape.get_item()
+                rect = item.boundingRect()
+                pos = item.pos()
+                self.parent_shape.original_center_x = pos.x() + rect.width() / 2
+                self.parent_shape.original_center_y = pos.y() + rect.height() / 2
+            
             # ハンドルを再作成して正しい位置に配置
             self.parent_shape.create_handles()
             
@@ -668,6 +676,14 @@ class ResizeHandle:
             
             # 円形の場合はcircumferenceポイントも更新（リサイズ時のみ実行）
             if hasattr(self.parent_shape, 'update_circumference_display'):
+                # 半径変更時もoriginal_center座標を更新
+                if hasattr(self.parent_shape, 'original_center_x'):
+                    item = self.parent_shape.get_item()
+                    rect = item.boundingRect()
+                    pos = item.pos()
+                    self.parent_shape.original_center_x = pos.x() + rect.width() / 2
+                    self.parent_shape.original_center_y = pos.y() + rect.height() / 2
+                
                 # リサイズ完了後なので再描画が必要
                 self.parent_shape.update_circumference_display()
             
@@ -1206,6 +1222,9 @@ class CircumferencePointItem(QGraphicsEllipseItem):
             self.is_dragging = False
             self.parent_ellipse.circumference_dragging = False
             
+            # ユーザーが手動で移動したことをマーク
+            self.point_data._user_moved = True
+            
             # 親の図形タイプを判定
             if hasattr(self.parent_ellipse, 'shape_type') and self.parent_ellipse.shape_type == ShapeType.BAR:
                 # バー形状の場合：相対位置を再計算して保存
@@ -1588,6 +1607,13 @@ class ResizableEllipseItem(ResizableGraphicsItem):
         
         import math
         
+        if DEBUG_MODE:
+            orig_x = getattr(self, 'original_center_x', 'None')
+            orig_y = getattr(self, 'original_center_y', 'None')
+            scale = getattr(self, 'scene_scale', 'None')
+            print(f"[DEBUG Circle] current_center=({center_x:.2f}, {center_y:.2f}), radius={radius:.2f}")
+            print(f"[DEBUG Circle] original_center=({orig_x}, {orig_y}), scale={scale}")
+        
         # circumferenceポイントをvalue順にソート
         sorted_points = sorted(self.circumference_points, key=lambda p: p.value)
         
@@ -1604,19 +1630,35 @@ class ResizableEllipseItem(ResizableGraphicsItem):
             if hasattr(point, 'position') and point.position:
                 # 初期設定時のみ：vehicle.jsonの座標から角度を計算して保存
                 if not hasattr(point, '_calculated_angle'):
-                    # vehicle.jsonで定義された元の円の中心を取得
-                    # （これは初期化時の円の中心と仮定）
-                    original_center_x = self.original_center_x if hasattr(self, 'original_center_x') else center_x
-                    original_center_y = self.original_center_y if hasattr(self, 'original_center_y') else center_y
+                    # スケール整合性を確保：original_center_x/yを元座標系に変換
+                    if hasattr(self, 'original_center_x') and hasattr(self, 'original_center_y'):
+                        # シーン座標を元座標に変換
+                        original_center_x = self.original_center_x / self.scene_scale
+                        original_center_y = self.original_center_y / self.scene_scale
+                    else:
+                        # フォールバック：現在の中心座標を元座標系に変換
+                        original_center_x = center_x / self.scene_scale
+                        original_center_y = center_y / self.scene_scale
                     
-                    # 元の座標から角度を計算
+                    # 元の座標から角度を計算（両方とも元座標系で統一）
                     rel_x = point.position.x - original_center_x
                     rel_y = point.position.y - original_center_y
                     point._calculated_angle = math.atan2(rel_y, rel_x)
+                    
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Point {i}: orig_center=({original_center_x:.2f}, {original_center_y:.2f}), "
+                              f"point_pos=({point.position.x:.2f}, {point.position.y:.2f}), "
+                              f"rel=({rel_x:.2f}, {rel_y:.2f}), angle={point._calculated_angle:.3f}")
                 
                 # 計算された角度を使用して現在の円周上に配置
                 display_x = center_x + radius * math.cos(point._calculated_angle)
                 display_y = center_y + radius * math.sin(point._calculated_angle)
+                
+                # 移動していない制御点の位置も更新（vehicle.json保存時の正確性を確保）
+                if not hasattr(point, '_user_moved') or not point._user_moved:
+                    scale = self.scene_scale
+                    point.position.x = display_x / scale
+                    point.position.y = display_y / scale
             else:
                 # position座標がない場合：valueから角度を計算
                 angle = point.value * 2 * math.pi - math.pi / 2  # -π/2で上方向を0とする
@@ -1624,8 +1666,11 @@ class ResizableEllipseItem(ResizableGraphicsItem):
                 display_y = center_y + radius * math.sin(angle)
             
             if DEBUG_MODE: 
-                angle_debug = point.value * 2 * math.pi - math.pi / 2 if not (hasattr(point, 'position') and point.position) else 0
-                print(f"[DEBUG] Point {i}: value={point.value:.3f}, angle={angle_debug:.3f}, pos=({display_x:.2f}, {display_y:.2f})")
+                user_moved = getattr(point, '_user_moved', False)
+                has_calc_angle = hasattr(point, '_calculated_angle')
+                angle_debug = point._calculated_angle if has_calc_angle else (point.value * 2 * math.pi - math.pi / 2)
+                print(f"[DEBUG] Point {i}: value={point.value:.3f}, angle={angle_debug:.3f}, "
+                      f"pos=({display_x:.2f}, {display_y:.2f}), user_moved={user_moved}, has_calc_angle={has_calc_angle}")
             
             # ポイントマーカー（大きな円）
             marker_size = 32  # さらに大きくして選択しやすく
@@ -3642,6 +3687,9 @@ class VehicleMonitorEditor(QMainWindow):
         self.config_data: Optional[ConfigData] = None
         self.vehicle_data: Optional[VehicleData] = None
         
+        # vehicle.jsonファイルパス記録用
+        self.current_vehicle_path: Optional[str] = None
+        
         # モード別ビューを作成（親ウィンドウ参照を渡す）
         self.config_view = ConfigMainView(self)
         self.monitor_view = MonitorMainView()
@@ -4321,8 +4369,11 @@ class VehicleMonitorEditor(QMainWindow):
             self.config_view.config_dock.hide()
         
         # EDITモード開始時に必ずカーソルを通常に戻す
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QTimer
         self.setCursor(Qt.ArrowCursor)
+        
+        # EDITモード環境完了後にvehicle.jsonファイルダイアログを表示
+        QTimer.singleShot(200, self.load_vehicle_file_dialog)
     
     
     def next_mode(self):
@@ -4331,8 +4382,8 @@ class VehicleMonitorEditor(QMainWindow):
             # CONFIG→EDIT遷移時にデータロード
             self.transition_to_edit_mode()
         elif self.current_mode == AppMode.EDIT:
-            # EDIT→MONITOR遷移
-            self.switch_to_mode(AppMode.MONITOR)
+            # EDIT→MONITOR遷移時にデータ保存・送信処理
+            self.transition_to_monitor_mode()
         elif self.current_mode == AppMode.MONITOR:
             # MONITORモードでは監視開始
             self.start_monitoring()
@@ -4420,14 +4471,58 @@ class VehicleMonitorEditor(QMainWindow):
             # EDITモードに切り替え
             self.switch_to_mode(AppMode.EDIT)
             
-            # EDITモードでvehicle.jsonを自動読み込み
-            vehicle_json_path = "C:/Users/table0/Desktop/Vehicles/vehicle.json"
-            if os.path.exists(vehicle_json_path):
-                self.load_vehicle_file(vehicle_json_path)
+            # EDITモードでvehicle.jsonファイルダイアログを表示
+            # setup_edit_mode()でQTimer遅延実行により表示される
             
         except Exception as e:
             print(f"CONFIG→EDIT遷移エラー: {e}")
             self.switch_to_mode(AppMode.EDIT)  # エラーでもEDITモードに切り替え
+    
+    def transition_to_monitor_mode(self):
+        """EDIT→MONITOR遷移時のデータ保存・送信処理"""
+        try:
+            print("=== EDIT→MONITOR遷移が開始されました ===")
+            print("EDIT→MONITOR移行: データ保存・送信処理を実行中...")
+            
+            # デバッグ: 現在の状態を確認
+            print(f"DEBUG: current_vehicle_path = {self.current_vehicle_path}")
+            print(f"DEBUG: canvas.shapes count = {len(self.canvas.shapes) if self.canvas.shapes else 0}")
+            if self.canvas.shapes:
+                print("DEBUG: 図形一覧:")
+                for i, shape in enumerate(self.canvas.shapes):
+                    print(f"  {i+1}. {shape.name} ({shape.category.value})")
+            
+            # 1. vehicle.jsonを上書き保存（パスが記録されており、図形が存在する場合）
+            if self.current_vehicle_path and self.canvas.shapes:
+                print(f"Vehicle.json上書き保存開始: {self.current_vehicle_path}")
+                self.save_vehicle_to_current_path()
+                print("Vehicle.json上書き保存完了")
+            else:
+                if not self.current_vehicle_path:
+                    print("Vehicle.jsonパスが記録されていません")
+                if not self.canvas.shapes:
+                    print("保存する図形がありません")
+            
+            # 2. MQTTで"vehicle"トピックに送信
+            if self.canvas.shapes:
+                print("Vehicle.jsonデータのMQTT送信開始...")
+                vehicle_data = self.generate_vehicle_json_data()
+                mqtt_success = self.send_vehicle_to_mqtt(vehicle_data)
+                if mqtt_success:
+                    print("MQTT vehicle送信完了")
+                else:
+                    print("MQTT vehicle送信失敗（継続）")
+            else:
+                print("送信する図形がありません")
+            
+            # 3. MONITORモードに切り替え
+            print("MONITORモードに切り替え中...")
+            self.switch_to_mode(AppMode.MONITOR)
+            print("EDIT→MONITOR遷移完了")
+            
+        except Exception as e:
+            print(f"EDIT→MONITOR遷移エラー: {e}")
+            self.switch_to_mode(AppMode.MONITOR)  # エラーでもMONITORモードに切り替え
     
     def show_startup_config_dialog(self):
         """起動時にconfig.jsonファイルダイアログを表示"""
@@ -4746,6 +4841,10 @@ class VehicleMonitorEditor(QMainWindow):
     def load_vehicle_file(self, file_path: str):
         """vehicle.jsonファイルを読み込む内部処理"""
         try:
+            # 読み込んだvehicle.jsonのパスを記録
+            self.current_vehicle_path = file_path
+            print(f"Vehicle file path recorded: {file_path}")
+            
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
@@ -4964,6 +5063,146 @@ class VehicleMonitorEditor(QMainWindow):
                 json.dump(vehicle_json, f, indent=2, ensure_ascii=False)
                 
             self.statusBar().showMessage(f"Vehicle JSONを保存しました: {file_path}")
+    
+    def save_vehicle_to_current_path(self):
+        """現在のvehicle.jsonパスに上書き保存"""
+        if not self.current_vehicle_path:
+            print("ERROR: vehicle.jsonパスが記録されていません")
+            return False
+            
+        if not self.canvas.shapes:
+            print("ERROR: 保存する図形がありません")
+            return False
+        
+        try:
+            vehicle_data = self.generate_vehicle_json_data()
+            
+            with open(self.current_vehicle_path, 'w', encoding='utf-8') as f:
+                json.dump(vehicle_data, f, indent=2, ensure_ascii=False)
+            
+            print(f"Vehicle.json上書き保存成功: {self.current_vehicle_path}")
+            return True
+            
+        except Exception as e:
+            print(f"Vehicle.json上書き保存エラー: {e}")
+            return False
+    
+    def generate_vehicle_json_data(self) -> dict:
+        """現在の図形からvehicle.json形式データを生成"""
+        icons = []
+        meters = []
+        ocrs = []
+        
+        for shape in self.canvas.shapes:
+            x, y, w, h = shape.get_original_coords()
+            
+            if shape.shape_type == ShapeType.RECTANGLE:
+                # 矩形: カテゴリに応じてアイコンまたはOCRとして分類
+                if shape.category == ShapeCategory.ICON:
+                    icon_data = {
+                        "name": shape.name,
+                        "path": f"/templates/{shape.name}.png",
+                        "type": "bool",
+                        "shape": "box",
+                        "top_left": {"x": round(x), "y": round(y)},
+                        "bottom_right": {"x": round(x + w), "y": round(y + h)}
+                    }
+                    icons.append(icon_data)
+                elif shape.category == ShapeCategory.OCR:
+                    ocr_data = {
+                        "name": shape.name,
+                        "type": "int",
+                        "shape": "box", 
+                        "top_left": {"x": round(x), "y": round(y)},
+                        "bottom_right": {"x": round(x + w), "y": round(y + h)}
+                    }
+                    ocrs.append(ocr_data)
+            
+            elif shape.shape_type == ShapeType.CIRCLE:
+                # 円形: メーターとして扱う
+                center_x = round(x + w / 2)
+                center_y = round(y + h / 2)
+                radius = round(max(w, h) / 2)
+                
+                # circumferenceポイントの取得
+                circumference_points = []
+                if hasattr(shape, 'circumference_points') and shape.circumference_points:
+                    for point in shape.circumference_points:
+                        circumference_points.append({
+                            "position": {"x": round(point.position.x), "y": round(point.position.y)},
+                            "value": point.value
+                        })
+                
+                meter_data = {
+                    "name": shape.name,
+                    "path": f"/ros2_ws/src/camera_system/templates/{shape.name}.png",
+                    "type": "float",
+                    "shape": "circle",
+                    "center": {"x": center_x, "y": center_y},
+                    "radius": radius,
+                    "ratio": 1,
+                    "circumference": circumference_points
+                }
+                meters.append(meter_data)
+        
+        # 既存のvehicle.jsonの基本情報を保持（存在する場合）
+        vehicle_json = {
+            "name": "XTRAIL",
+            "path": "/ros2_ws/src/camera_system/templates",
+            "threshold": 0.8,
+            "gray": True,
+            "offset": 50,
+            "icon": icons,
+            "meter": meters,
+            "ocr": ocrs
+        }
+        
+        # 既存ファイルから基本情報を取得（可能であれば）
+        if self.vehicle_data:
+            vehicle_json["name"] = self.vehicle_data.name
+            vehicle_json["path"] = self.vehicle_data.path
+            vehicle_json["threshold"] = self.vehicle_data.threshold
+            vehicle_json["gray"] = self.vehicle_data.gray
+            vehicle_json["offset"] = self.vehicle_data.offset
+        
+        return vehicle_json
+    
+    def send_vehicle_to_mqtt(self, vehicle_data: dict) -> bool:
+        """MQTT 'vehicle' トピックにvehicle.json送信"""
+        try:
+            print("=== MQTT vehicle送信開始 ===")
+            print(f"MQTT service available: {self.mqtt_service is not None}")
+            
+            if not self.mqtt_service or not hasattr(self.mqtt_service, 'is_connected'):
+                print("ERROR: MQTTサービスが利用できません")
+                return False
+            
+            print(f"MQTT connected: {self.mqtt_service.is_connected()}")
+            if not self.mqtt_service.is_connected():
+                print("ERROR: MQTT接続が確立されていません")
+                return False
+            
+            # JSON文字列に変換
+            import json
+            vehicle_json = json.dumps(vehicle_data, ensure_ascii=False, separators=(',', ':'))
+            print(f"Vehicle JSON prepared: {len(vehicle_json)} chars")
+            print(f"Vehicle JSON preview: {vehicle_json[:200]}...")
+            
+            # 'vehicle' トピックに送信
+            print("Calling mqtt_service.publish for 'vehicle' topic...")
+            success = self.mqtt_service.publish("vehicle", vehicle_json, qos=1, retain=True)
+            
+            print(f"Publish result: {success}")
+            if success:
+                print("MQTT 'vehicle' トピックに設定を送信しました")
+                return True
+            else:
+                print("MQTT vehicle送信に失敗しました")
+                return False
+                
+        except Exception as e:
+            print(f"MQTT vehicle送信エラー: {e}")
+            return False
     
     def setup_side_panel(self):
         """サイドパネルをセットアップ"""
