@@ -3114,6 +3114,9 @@ class MonitorMainView(QWidget):
         self.detection_results = {}  # パーツ名: 検出結果の辞書
         self.vehicle_data = None  # VehicleDataへの参照
         
+        # 監視状態管理
+        self.is_monitoring = False
+        
         self.setup_ui()
     
     def setup_ui(self):
@@ -3224,6 +3227,10 @@ class MonitorMainView(QWidget):
         """)
         layout.addWidget(panel_title)
         
+        # 監視制御ボタンエリア
+        control_area = self.create_monitoring_control_buttons()
+        layout.addWidget(control_area)
+        
         # スクロール可能な結果表示エリア
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -3257,6 +3264,82 @@ class MonitorMainView(QWidget):
         
         return widget
     
+    def create_monitoring_control_buttons(self):
+        """監視制御ボタンエリア作成"""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 10)
+        layout.setSpacing(8)
+        
+        # 開始ボタン
+        self.start_btn = QPushButton("🎯 監視開始")
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #229954;
+            }
+            QPushButton:pressed {
+                background-color: #1e8449;
+            }
+            QPushButton:disabled {
+                background-color: #95a5a6;
+                color: #7f8c8d;
+            }
+        """)
+        self.start_btn.clicked.connect(self.on_start_monitoring_clicked)
+        
+        # 停止ボタン
+        self.stop_btn = QPushButton("⏹️ 監視停止")
+        self.stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e74c3c;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #c0392b;
+            }
+            QPushButton:pressed {
+                background-color: #a93226;
+            }
+            QPushButton:disabled {
+                background-color: #95a5a6;
+                color: #7f8c8d;
+            }
+        """)
+        self.stop_btn.clicked.connect(self.on_stop_monitoring_clicked)
+        
+        # 初期状態では停止ボタンは無効（監視状態に基づいて設定）
+        self.update_button_states()
+        
+        layout.addWidget(self.start_btn)
+        layout.addWidget(self.stop_btn)
+        layout.addStretch()  # 右側の余白
+        
+        return widget
+    
+    def update_button_states(self):
+        """監視状態に応じてボタンの有効・無効を切り替え"""
+        if hasattr(self, 'start_btn') and hasattr(self, 'stop_btn'):
+            if self.is_monitoring:
+                self.start_btn.setEnabled(False)
+                self.stop_btn.setEnabled(True)
+            else:
+                self.start_btn.setEnabled(True)
+                self.stop_btn.setEnabled(False)
+    
     def set_mqtt_service(self, mqtt_service):
         """MQTTサービスを設定"""
         # 既存の接続があれば切断
@@ -3280,11 +3363,25 @@ class MonitorMainView(QWidget):
     def set_vehicle_data(self, vehicle_data):
         """VehicleDataを設定"""
         self.vehicle_data = vehicle_data
+    
+    def on_start_monitoring_clicked(self):
+        """監視開始ボタンクリック時の処理"""
+        print("MONITOR: Start monitoring button clicked")
+        self.start_monitoring()
+        self.update_button_states()
+    
+    def on_stop_monitoring_clicked(self):
+        """監視停止ボタンクリック時の処理"""
+        print("MONITOR: Stop monitoring button clicked")
+        self.stop_monitoring()
+        self.update_button_states()
         
     def start_monitoring(self):
         """監視開始"""
         print("MONITOR: Starting monitoring process...")
         
+        self.is_monitoring = True
+        self.is_monitoring_active = True  # 監視状態フラグを更新
         self.status_label.setText("🟢 監視実行中 - リアルタイム画像受信中")
         self.status_label.setStyleSheet("""
             QLabel {
@@ -3301,6 +3398,18 @@ class MonitorMainView(QWidget):
         if self.mqtt_service:
             self.mqtt_service.set_mode("MONITOR")
             print(f"MONITOR: MQTT service mode set, connected: {self.mqtt_service.is_connected()}")
+            
+            # ROS2システムに監視開始コマンドを送信
+            try:
+                import json
+                start_command = {"value": True}
+                success = self.mqtt_service.publish("response/start", json.dumps(start_command), qos=1)
+                if success:
+                    print("MONITOR: Start command sent to ROS2 publishers successfully")
+                else:
+                    print("MONITOR: Failed to send start command to ROS2 publishers")
+            except Exception as e:
+                print(f"MONITOR: Error sending start command: {e}")
         
         # FPS計測の初期化
         self.fps_counter = 0
@@ -3314,10 +3423,15 @@ class MonitorMainView(QWidget):
         self.fps_timer.timeout.connect(self.update_fps_display)
         self.fps_timer.start(1000)
         
+        # ヘッダーボタンを更新
+        self.update_navigation_buttons()
+        
         print("MONITOR: Monitoring started - waiting for MQTT images...")
     
     def stop_monitoring(self):
         """監視停止"""
+        self.is_monitoring = False
+        self.is_monitoring_active = False  # 監視状態フラグを更新
         self.status_label.setText("⏸️ 監視停止中")
         self.status_label.setStyleSheet("""
             QLabel {
@@ -3332,6 +3446,22 @@ class MonitorMainView(QWidget):
         
         if hasattr(self, 'fps_timer'):
             self.fps_timer.stop()
+        
+        # ROS2システムに監視停止コマンドを送信
+        if self.mqtt_service:
+            try:
+                import json
+                stop_command = {"value": False}
+                success = self.mqtt_service.publish("response/start", json.dumps(stop_command), qos=1)
+                if success:
+                    print("MONITOR: Stop command sent to ROS2 publishers successfully")
+                else:
+                    print("MONITOR: Failed to send stop command to ROS2 publishers")
+            except Exception as e:
+                print(f"MONITOR: Error sending stop command: {e}")
+        
+        # ヘッダーボタンを更新
+        self.update_navigation_buttons()
         
         print("MONITOR: Monitoring stopped")
     
@@ -3689,6 +3819,13 @@ class VehicleMonitorEditor(QMainWindow):
         
         # vehicle.jsonファイルパス記録用
         self.current_vehicle_path: Optional[str] = None
+        
+        # 遷移状態管理フラグ（初回遷移とユーザー戻り操作を区別）
+        self.is_initial_config_transition = True  # 初回CONFIG遷移時のみファイルダイアログ表示
+        self.is_initial_edit_transition = True    # 初回EDIT遷移時のみファイルダイアログ表示
+        
+        # 監視状態管理フラグ（ヘッダーボタンのトグル制御用）
+        self.is_monitoring_active = False
         
         # モード別ビューを作成（親ウィンドウ参照を渡す）
         self.config_view = ConfigMainView(self)
@@ -4200,35 +4337,69 @@ class VehicleMonitorEditor(QMainWindow):
             """)
             
         elif self.current_mode == AppMode.MONITOR:
-            # MONITORモード: 戻るボタンは"EDIT"、進むボタンは"START"
+            # MONITORモード: 戻るボタンは"EDIT"、進むボタンは監視状態でトグル
             self.prev_btn.setEnabled(True)
             self.prev_btn.setText("◀ EDIT")
             
             self.next_btn.setEnabled(True)
-            self.next_btn.setText("START")
-            # STARTボタンは緑色スタイル
-            self.next_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #27ae60;
-                    color: white;
-                    border: 2px solid #229954;
-                    padding: 8px 15px;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    font-weight: bold;
-                    min-width: 65px;
-                    max-width: 65px;
-                    min-height: 35px;
-                    max-height: 35px;
-                }
-                QPushButton:hover {
-                    background-color: #229954;
-                    border-color: #1e8449;
-                }
-                QPushButton:pressed {
-                    background-color: #1e8449;
-                }
-            """)
+            
+            # トグル状態に基づくボタン表示（Fletパターン改善版）
+            print(f"MONITOR: Updating button display - is_monitoring_active = {self.is_monitoring_active}")
+            
+            if self.is_monitoring_active:
+                # 監視実行中 → STOPボタン表示
+                self.next_btn.setText("⏹️ STOP")
+                print("MONITOR: Button set to STOP (red)")
+                # STOPボタンは赤色スタイル
+                self.next_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #e74c3c;
+                        color: white;
+                        border: 2px solid #c0392b;
+                        padding: 8px 15px;
+                        border-radius: 6px;
+                        font-size: 12px;
+                        font-weight: bold;
+                        min-width: 65px;
+                        max-width: 65px;
+                        min-height: 35px;
+                        max-height: 35px;
+                    }
+                    QPushButton:hover {
+                        background-color: #c0392b;
+                        border-color: #a93226;
+                    }
+                    QPushButton:pressed {
+                        background-color: #a93226;
+                    }
+                """)
+            else:
+                # 監視停止中 → STARTボタン表示
+                self.next_btn.setText("🎯 START")
+                print("MONITOR: Button set to START (green)")
+                # STARTボタンは緑色スタイル
+                self.next_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #27ae60;
+                        color: white;
+                        border: 2px solid #229954;
+                        padding: 8px 15px;
+                        border-radius: 6px;
+                        font-size: 12px;
+                        font-weight: bold;
+                        min-width: 65px;
+                        max-width: 65px;
+                        min-height: 35px;
+                        max-height: 35px;
+                    }
+                    QPushButton:hover {
+                        background-color: #229954;
+                        border-color: #1e8449;
+                    }
+                    QPushButton:pressed {
+                        background-color: #1e8449;
+                    }
+                """)
     
     def start_monitoring(self):
         """監視開始処理（STARTボタンの機能）"""
@@ -4247,7 +4418,10 @@ class VehicleMonitorEditor(QMainWindow):
             self.monitor_view.start_monitoring()
             
             # ダミーデータで検出結果テスト（実際のシステムではREST APIまたはMQTTから取得）
-            self.simulate_detection_results()
+            # self.simulate_detection_results()  # クラッシュ原因により無効化
+            
+            # ヘッダーボタン更新
+            self.update_navigation_buttons()
             
             # ステータスバー更新
             self.statusBar().showMessage("🟢 監視実行中 - パーツ検出結果をリアルタイム表示中")
@@ -4321,6 +4495,13 @@ class VehicleMonitorEditor(QMainWindow):
             # CONFIGモードではサイドパネル非表示
             if hasattr(self, 'side_panel'):
                 self.side_panel.hide()
+            
+            # 初回CONFIG遷移時のみconfig.jsonファイルダイアログを表示
+            if self.is_initial_config_transition:
+                print("初回CONFIG遷移: config.jsonファイルダイアログを表示予定")
+                # 既存の起動時ファイルダイアログ処理を維持
+            else:
+                print("CONFIG戻り遷移: 既存config.jsonデータを保持")
         elif mode == AppMode.EDIT:
             self.setup_edit_mode()
         elif mode == AppMode.MONITOR:
@@ -4328,6 +4509,9 @@ class VehicleMonitorEditor(QMainWindow):
             # MONITORモードではサイドパネル非表示
             if hasattr(self, 'side_panel'):
                 self.side_panel.hide()
+            
+            # MONITORモード切り替え時に即座にプレビュー開始
+            self.setup_monitor_mode()
         
         # ヘッダーのモード表示を更新
         self.update_mode_display()
@@ -4345,6 +4529,9 @@ class VehicleMonitorEditor(QMainWindow):
             
             # MONITORビューの監視停止
             self.monitor_view.stop_monitoring()
+            
+            # ヘッダーボタン更新
+            self.update_navigation_buttons()
             
             # ステータスバー更新
             self.statusBar().showMessage("⏸️ 監視停止")
@@ -4372,8 +4559,12 @@ class VehicleMonitorEditor(QMainWindow):
         from PySide6.QtCore import Qt, QTimer
         self.setCursor(Qt.ArrowCursor)
         
-        # EDITモード環境完了後にvehicle.jsonファイルダイアログを表示
-        QTimer.singleShot(200, self.load_vehicle_file_dialog)
+        # 初回EDIT遷移時のみvehicle.jsonファイルダイアログを表示
+        if self.is_initial_edit_transition:
+            QTimer.singleShot(200, self.load_vehicle_file_dialog)
+            print("初回EDIT遷移: vehicle.jsonファイルダイアログを表示予定")
+        else:
+            print("EDIT戻り遷移: 既存vehicle.jsonデータを保持")
     
     
     def next_mode(self):
@@ -4385,15 +4576,75 @@ class VehicleMonitorEditor(QMainWindow):
             # EDIT→MONITOR遷移時にデータ保存・送信処理
             self.transition_to_monitor_mode()
         elif self.current_mode == AppMode.MONITOR:
-            # MONITORモードでは監視開始
-            self.start_monitoring()
+            # MONITORモードでは監視開始・停止をトグル（Fletパターンベース）
+            self.is_monitoring_active = not self.is_monitoring_active
+            
+            # デバッグ情報を更新
+            status = "開始" if self.is_monitoring_active else "停止"
+            print(f"MONITOR: Toggle state changed to {self.is_monitoring_active} (監視{status})")
+            
+            # MQTT publish処理を実行（Fletパターン）
+            self._on_start_stop_toggle(self.is_monitoring_active)
+            
+            # ボタン表示を更新
+            self.update_navigation_buttons()
+    
+    def _on_start_stop_toggle(self, is_monitoring: bool):
+        """START/STOPトグル時の処理（Fletパターンベース）"""
+        print(f"=== START/STOP Toggle (Flet Pattern) ===")
+        print(f"Monitoring state: {is_monitoring}")
+        
+        # MQTT送信処理
+        if hasattr(self, 'mqtt_service') and self.mqtt_service:
+            try:
+                import json
+                
+                # Fletパターンと同じメッセージ形式
+                start_message = {
+                    "value": is_monitoring
+                }
+                
+                print(f"Publishing to topic: response/start")
+                print(f"Message: {start_message}")
+                
+                # MQTT送信を実行
+                success = self.mqtt_service.publish("response/start", json.dumps(start_message), qos=1)
+                
+                if success:
+                    status = "開始" if is_monitoring else "停止"
+                    print(f"✅ Successfully published start control: 監視{status}")
+                    
+                    # ステータスバー更新
+                    self.statusBar().showMessage(f"🔄 MQTT送信成功: 監視{status}")
+                else:
+                    print("❌ MQTT publish failed")
+                    self.statusBar().showMessage("❌ MQTT送信失敗")
+                
+            except Exception as e:
+                print(f"❌ Error in MQTT publish: {e}")
+                self.statusBar().showMessage(f"❌ MQTT送信エラー: {e}")
+        else:
+            print("⚠️ MQTT service not available")
+            self.statusBar().showMessage("⚠️ MQTT未接続")
+        
+        print(f"=== End START/STOP Toggle ===\n")
     
     def previous_mode(self):
-        """前のモードに遷移"""
+        """前のモードに遷移（戻り操作）"""
         modes = list(AppMode)
         current_index = modes.index(self.current_mode)
         prev_index = (current_index - 1) % len(modes)
-        self.switch_to_mode(modes[prev_index])
+        prev_mode = modes[prev_index]
+        
+        # 戻り操作なので初回遷移フラグをリセット
+        if prev_mode == AppMode.CONFIG:
+            self.is_initial_config_transition = False
+            print("CONFIG戻り操作: ファイルダイアログを表示しません")
+        elif prev_mode == AppMode.EDIT:
+            self.is_initial_edit_transition = False
+            print("EDIT戻り操作: vehicle.jsonファイルダイアログを表示しません")
+        
+        self.switch_to_mode(prev_mode)
     
     def transition_to_edit_mode(self):
         """CONFIG→EDIT遷移時のデータ受け渡し（ユーザー体験フロー対応）"""
@@ -4468,8 +4719,11 @@ class VehicleMonitorEditor(QMainWindow):
             else:
                 print("⚠️ RestAPI full_image取得失敗、EDITモードは画像なしで開始")
             
-            # EDITモードに切り替え
+            # EDITモードに切り替え（この時点では初回遷移フラグはTrueのまま）
             self.switch_to_mode(AppMode.EDIT)
+            
+            # 初回遷移完了後にフラグをリセット
+            self.is_initial_edit_transition = False
             
             # EDITモードでvehicle.jsonファイルダイアログを表示
             # setup_edit_mode()でQTimer遅延実行により表示される
@@ -4523,6 +4777,38 @@ class VehicleMonitorEditor(QMainWindow):
         except Exception as e:
             print(f"EDIT→MONITOR遷移エラー: {e}")
             self.switch_to_mode(AppMode.MONITOR)  # エラーでもMONITORモードに切り替え
+    
+    def setup_monitor_mode(self):
+        """MONITORモード初期化処理"""
+        try:
+            print("MONITOR: Setting up monitor mode with automatic preview start...")
+            
+            # 監視状態フラグを初期化（重要：MONITORモード開始時は監視停止状態）
+            self.is_monitoring_active = False
+            print("MONITOR: is_monitoring_active flag reset to False")
+            
+            # MONITORビューにMQTTサービスを設定
+            if hasattr(self.config_view, 'mqtt_service'):
+                print("MONITOR: Setting MQTT service to monitor view")
+                self.monitor_view.set_mqtt_service(self.config_view.mqtt_service)
+            
+            # vehicle.jsonデータを設定
+            if self.vehicle_data:
+                print("MONITOR: Setting vehicle data to monitor view")
+                self.monitor_view.set_vehicle_data(self.vehicle_data)
+            
+            # MQTTサービスのモードを設定（プレビュー画像受信を開始）
+            if hasattr(self.config_view, 'mqtt_service') and self.config_view.mqtt_service:
+                print("MONITOR: Setting MQTT service mode and starting image preview")
+                self.config_view.mqtt_service.set_mode("MONITOR")
+                # 監視状態は開始ボタンを押すまでは false のまま
+            
+            print("MONITOR: Monitor mode setup completed - preview should start immediately")
+            self.statusBar().showMessage("📊 MONITORモード - プレビュー表示中（🎯監視開始ボタンを押して計測開始）")
+            
+        except Exception as e:
+            print(f"MONITOR: Setup error: {e}")
+            self.statusBar().showMessage(f"❌ MONITORモード初期化エラー: {e}")
     
     def show_startup_config_dialog(self):
         """起動時にconfig.jsonファイルダイアログを表示"""
