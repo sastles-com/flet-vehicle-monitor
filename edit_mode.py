@@ -183,6 +183,22 @@ class VehicleData:
     icon: List[IconData]
     meter: List[MeterData]
     ocr: List[OCRData]
+    _original_json_data: dict = None  # 元のJSONデータを完全保持
+    
+    @property
+    def icons(self) -> List[dict]:
+        """アイコンデータをdict形式で取得"""
+        return self._original_json_data.get("icon", []) if self._original_json_data else []
+    
+    @property
+    def meters(self) -> List[dict]:
+        """メーターデータをdict形式で取得"""
+        return self._original_json_data.get("meter", []) if self._original_json_data else []
+    
+    @property
+    def ocrs(self) -> List[dict]:
+        """OCRデータをdict形式で取得"""
+        return self._original_json_data.get("ocr", []) if self._original_json_data else []
 
 
 @dataclass
@@ -1252,11 +1268,12 @@ class CircumferencePointItem(QGraphicsEllipseItem):
                 else:
                     self.point_data._calculated_relative_pos = (marker_center_y - pos.y()) / rect.height()
             else:
-                # 円形の場合：角度計算
+                # 円形の場合：円制約を厳密に適用
                 rect = self.parent_ellipse.ellipse_item.boundingRect()
                 pos = self.parent_ellipse.ellipse_item.pos()
                 center_x = pos.x() + rect.width() / 2
                 center_y = pos.y() + rect.height() / 2
+                radius = max(rect.width(), rect.height()) / 2
                 
                 # マーカーの中心位置を取得
                 marker_pos = self.pos()
@@ -1270,8 +1287,31 @@ class CircumferencePointItem(QGraphicsEllipseItem):
                 import math
                 new_angle = math.atan2(dy, dx)
                 
-                # 正規化された角度を保存（次回の表示更新で使用される）
+                # 円制約：マーカーを正確な円周上に移動
+                constrained_x = center_x + radius * math.cos(new_angle)
+                constrained_y = center_y + radius * math.sin(new_angle)
+                
+                # マーカーの位置を円周上に補正
+                corrected_marker_x = constrained_x - 16  # marker_size/2
+                corrected_marker_y = constrained_y - 16
+                self.setPos(corrected_marker_x, corrected_marker_y)
+                
+                # 角度を保存
                 self.point_data._calculated_angle = new_angle
+                
+                # position座標を元座標系で更新（高精度保持）
+                scale = self.parent_ellipse.scene_scale
+                original_center_x = self.parent_ellipse.original_center_x
+                original_center_y = self.parent_ellipse.original_center_y
+                original_radius = self.parent_ellipse.original_radius
+                
+                # 元座標系での正確な位置を計算
+                orig_x = original_center_x + original_radius * math.cos(new_angle)
+                orig_y = original_center_y + original_radius * math.sin(new_angle)
+                
+                # position座標を高精度で更新
+                self.point_data.position.x = round(orig_x, 6)
+                self.point_data.position.y = round(orig_y, 6)
                 
                 # 累積角度もリセット（ドラッグ完了時）
                 if hasattr(self.point_data, '_accumulated_angle'):
@@ -1630,35 +1670,38 @@ class ResizableEllipseItem(ResizableGraphicsItem):
             if hasattr(point, 'position') and point.position:
                 # 初期設定時のみ：vehicle.jsonの座標から角度を計算して保存
                 if not hasattr(point, '_calculated_angle'):
-                    # スケール整合性を確保：original_center_x/yを元座標系に変換
-                    if hasattr(self, 'original_center_x') and hasattr(self, 'original_center_y'):
-                        # シーン座標を元座標に変換
-                        original_center_x = self.original_center_x / self.scene_scale
-                        original_center_y = self.original_center_y / self.scene_scale
-                    else:
-                        # フォールバック：現在の中心座標を元座標系に変換
-                        original_center_x = center_x / self.scene_scale
-                        original_center_y = center_y / self.scene_scale
+                    # 座標系統一：元のvehicle.json座標系（スケール無し）で角度計算
+                    original_center_x = self.original_center_x
+                    original_center_y = self.original_center_y
                     
-                    # 元の座標から角度を計算（両方とも元座標系で統一）
-                    rel_x = point.position.x - original_center_x
-                    rel_y = point.position.y - original_center_y
+                    # 元座標系での相対座標から高精度角度計算
+                    rel_x = float(point.position.x - original_center_x)
+                    rel_y = float(point.position.y - original_center_y)
                     point._calculated_angle = math.atan2(rel_y, rel_x)
                     
+                    # 元座標での半径も記録（円制約検証用）
+                    point._original_radius = math.sqrt(rel_x * rel_x + rel_y * rel_y)
+                    
                     if DEBUG_MODE:
-                        print(f"[DEBUG] Point {i}: orig_center=({original_center_x:.2f}, {original_center_y:.2f}), "
-                              f"point_pos=({point.position.x:.2f}, {point.position.y:.2f}), "
-                              f"rel=({rel_x:.2f}, {rel_y:.2f}), angle={point._calculated_angle:.3f}")
+                        print(f"[DEBUG] Point {i}: unified_center=({original_center_x}, {original_center_y}), "
+                              f"point_pos=({point.position.x}, {point.position.y}), "
+                              f"rel=({rel_x:.6f}, {rel_y:.6f}), angle={point._calculated_angle:.6f}, "
+                              f"orig_radius={point._original_radius:.2f}")
                 
-                # 計算された角度を使用して現在の円周上に配置
+                # 計算された角度を使用してシーン座標上の現在の円周上に配置
                 display_x = center_x + radius * math.cos(point._calculated_angle)
                 display_y = center_y + radius * math.sin(point._calculated_angle)
                 
-                # 移動していない制御点の位置も更新（vehicle.json保存時の正確性を確保）
+                # 移動していない制御点のposition座標を円制約に従って更新
                 if not hasattr(point, '_user_moved') or not point._user_moved:
-                    scale = self.scene_scale
-                    point.position.x = display_x / scale
-                    point.position.y = display_y / scale
+                    # 元座標系での正確な位置を計算
+                    original_radius = self.original_radius
+                    orig_x = self.original_center_x + original_radius * math.cos(point._calculated_angle)
+                    orig_y = self.original_center_y + original_radius * math.sin(point._calculated_angle)
+                    
+                    # position座標を元座標系で更新
+                    point.position.x = round(orig_x, 6)  # 高精度で保持
+                    point.position.y = round(orig_y, 6)
             else:
                 # position座標がない場合：valueから角度を計算
                 angle = point.value * 2 * math.pi - math.pi / 2  # -π/2で上方向を0とする
@@ -5190,7 +5233,8 @@ class VehicleMonitorEditor(QMainWindow):
                 offset=data["offset"],
                 icon=icons,
                 meter=meters,
-                ocr=ocrs
+                ocr=ocrs,
+                _original_json_data=data.copy()  # 元のJSONデータを完全保持
             )
             
             # 図形を表示に反映（最大化ウィンドウサイズに合わせて）
@@ -5374,41 +5418,114 @@ class VehicleMonitorEditor(QMainWindow):
             return False
     
     def generate_vehicle_json_data(self) -> dict:
-        """現在の図形からvehicle.json形式データを生成"""
-        icons = []
-        meters = []
-        ocrs = []
+        """現在の図形からvehicle.json形式データを生成（元データ完全保持）"""
+        print("=== Vehicle JSON生成開始（完全保持モード） ===")
         
+        # ベースとなるvehicle.jsonデータの準備（元データを完全保持）
+        if self.vehicle_data:
+            # 元のvehicle.jsonの内容を完全にコピー
+            try:
+                # VehicleDataから元のJSONデータを再構築
+                if hasattr(self.vehicle_data, '_original_json_data'):
+                    # 元のJSONデータが保持されている場合
+                    vehicle_json = self.vehicle_data._original_json_data.copy()
+                    print("元のJSONデータから完全復元")
+                else:
+                    # VehicleDataから再構築
+                    vehicle_json = {
+                        "name": self.vehicle_data.name,
+                        "path": self.vehicle_data.path,
+                        "threshold": self.vehicle_data.threshold,
+                        "gray": self.vehicle_data.gray,
+                        "offset": self.vehicle_data.offset
+                    }
+                    # 元のiconデータを保持
+                    if hasattr(self.vehicle_data, 'icons'):
+                        vehicle_json["icon"] = self.vehicle_data.icons.copy()
+                    # 元のmeterデータを保持
+                    if hasattr(self.vehicle_data, 'meters'):
+                        vehicle_json["meter"] = self.vehicle_data.meters.copy()
+                    # 元のocrデータを保持
+                    if hasattr(self.vehicle_data, 'ocrs'):
+                        vehicle_json["ocr"] = self.vehicle_data.ocrs.copy()
+                    print("VehicleDataから構造復元")
+            except Exception as e:
+                print(f"元データ復元エラー: {e}")
+                vehicle_json = {
+                    "name": self.vehicle_data.name if hasattr(self.vehicle_data, 'name') else "VEHICLE",
+                    "path": self.vehicle_data.path if hasattr(self.vehicle_data, 'path') else "/templates",
+                    "threshold": getattr(self.vehicle_data, 'threshold', 0.8),
+                    "gray": getattr(self.vehicle_data, 'gray', True),
+                    "offset": getattr(self.vehicle_data, 'offset', 50)
+                }
+        else:
+            # fallback: 元データがない場合のみデフォルト値使用
+            vehicle_json = {
+                "name": "VEHICLE",
+                "path": "/templates", 
+                "threshold": 0.8,
+                "gray": True,
+                "offset": 50,
+                "icon": [],
+                "meter": [], 
+                "ocr": []
+            }
+            print("デフォルト値でベース作成")
+        
+        # 編集された図形データのみ更新
+        edited_icons = []
+        edited_meters = []
+        edited_ocrs = []
+        
+        # 現在の図形から編集されたパーツデータを生成
         for shape in self.canvas.shapes:
             x, y, w, h = shape.get_original_coords()
             
             if shape.shape_type == ShapeType.RECTANGLE:
                 # 矩形: カテゴリに応じてアイコンまたはOCRとして分類
                 if shape.category == ShapeCategory.ICON:
-                    icon_data = {
+                    # 元のiconデータから属性を継承（座標のみ更新）
+                    original_icon = self._find_original_part_data("icon", shape.name)
+                    icon_data = original_icon.copy() if original_icon else {
                         "name": shape.name,
-                        "path": f"/templates/{shape.name}.png",
                         "type": "bool",
-                        "shape": "box",
+                        "shape": "box"
+                    }
+                    # 座標のみ更新
+                    icon_data.update({
                         "top_left": {"x": round(x), "y": round(y)},
                         "bottom_right": {"x": round(x + w), "y": round(y + h)}
-                    }
-                    icons.append(icon_data)
+                    })
+                    edited_icons.append(icon_data)
+                
                 elif shape.category == ShapeCategory.OCR:
-                    ocr_data = {
+                    # 元のocrデータから属性を継承（座標のみ更新）
+                    original_ocr = self._find_original_part_data("ocr", shape.name)
+                    ocr_data = original_ocr.copy() if original_ocr else {
                         "name": shape.name,
                         "type": "int",
-                        "shape": "box", 
+                        "shape": "box"
+                    }
+                    # 座標のみ更新
+                    ocr_data.update({
                         "top_left": {"x": round(x), "y": round(y)},
                         "bottom_right": {"x": round(x + w), "y": round(y + h)}
-                    }
-                    ocrs.append(ocr_data)
+                    })
+                    edited_ocrs.append(ocr_data)
             
             elif shape.shape_type == ShapeType.CIRCLE:
                 # 円形: メーターとして扱う
                 center_x = round(x + w / 2)
                 center_y = round(y + h / 2)
                 radius = round(max(w, h) / 2)
+                
+                # 元のmeterデータから属性を継承（座標・circumferenceのみ更新）
+                original_meter = self._find_original_part_data("meter", shape.name)
+                meter_data = original_meter.copy() if original_meter else {
+                    "name": shape.name,
+                    "type": "float",
+                    "shape": "circle"
+                }
                 
                 # circumferenceポイントの取得
                 circumference_points = []
@@ -5419,39 +5536,41 @@ class VehicleMonitorEditor(QMainWindow):
                             "value": point.value
                         })
                 
-                meter_data = {
-                    "name": shape.name,
-                    "path": f"/ros2_ws/src/camera_system/templates/{shape.name}.png",
-                    "type": "float",
-                    "shape": "circle",
+                # 座標データのみ更新
+                meter_data.update({
                     "center": {"x": center_x, "y": center_y},
                     "radius": radius,
-                    "ratio": 1,
                     "circumference": circumference_points
-                }
-                meters.append(meter_data)
+                })
+                edited_meters.append(meter_data)
         
-        # 既存のvehicle.jsonの基本情報を保持（存在する場合）
-        vehicle_json = {
-            "name": "XTRAIL",
-            "path": "/ros2_ws/src/camera_system/templates",
-            "threshold": 0.8,
-            "gray": True,
-            "offset": 50,
-            "icon": icons,
-            "meter": meters,
-            "ocr": ocrs
-        }
+        # 編集されたパーツデータで置換（その他要素は保持）
+        vehicle_json["icon"] = edited_icons
+        vehicle_json["meter"] = edited_meters
+        vehicle_json["ocr"] = edited_ocrs
         
-        # 既存ファイルから基本情報を取得（可能であれば）
-        if self.vehicle_data:
-            vehicle_json["name"] = self.vehicle_data.name
-            vehicle_json["path"] = self.vehicle_data.path
-            vehicle_json["threshold"] = self.vehicle_data.threshold
-            vehicle_json["gray"] = self.vehicle_data.gray
-            vehicle_json["offset"] = self.vehicle_data.offset
-        
+        print(f"✅ Vehicle JSON生成完了 - icon:{len(edited_icons)}, meter:{len(edited_meters)}, ocr:{len(edited_ocrs)}")
         return vehicle_json
+    
+    def _find_original_part_data(self, part_type: str, part_name: str) -> dict:
+        """元のvehicle.jsonから指定されたパーツデータを検索"""
+        if not self.vehicle_data or not hasattr(self.vehicle_data, '_original_json_data'):
+            return None
+            
+        try:
+            original_data = self.vehicle_data._original_json_data
+            if not original_data:
+                return None
+                
+            parts_list = original_data.get(part_type, [])
+            for part in parts_list:
+                if part.get('name') == part_name:
+                    return part
+                    
+        except Exception as e:
+            print(f"元パーツデータ検索エラー ({part_type}.{part_name}): {e}")
+            
+        return None
     
     def send_vehicle_to_mqtt(self, vehicle_data: dict) -> bool:
         """MQTT 'vehicle' トピックにvehicle.json送信"""
