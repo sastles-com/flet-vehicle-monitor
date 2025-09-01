@@ -966,8 +966,8 @@ class CircumferencePointDrag:
             self.is_dragging = False
             # 親図形のドラッグ中フラグをクリア
             self.parent_ellipse.circumference_dragging = False
-            # circumferenceドラッグ終了後は再描画不要（既に正しい位置にある）
-            # self.parent_ellipse.update_circumference_display()
+            # circumferenceドラッグ終了後は表示更新が必要
+            self.parent_ellipse.update_circumference_display()
             event.accept()
 
 
@@ -1287,31 +1287,22 @@ class CircumferencePointItem(QGraphicsEllipseItem):
                 import math
                 new_angle = math.atan2(dy, dx)
                 
-                # 円制約：マーカーを正確な円周上に移動
+                # 正規化された角度を保存（次回の表示更新で使用される）
+                self.point_data._calculated_angle = new_angle
+                
+                # 円制約を適用：マーカーを円周上に補正
                 constrained_x = center_x + radius * math.cos(new_angle)
                 constrained_y = center_y + radius * math.sin(new_angle)
                 
-                # マーカーの位置を円周上に補正
+                # マーカーの位置を補正
                 corrected_marker_x = constrained_x - 16  # marker_size/2
                 corrected_marker_y = constrained_y - 16
                 self.setPos(corrected_marker_x, corrected_marker_y)
                 
-                # 角度を保存
-                self.point_data._calculated_angle = new_angle
-                
-                # position座標を元座標系で更新（高精度保持）
+                # position座標を更新（元座標系）
                 scale = self.parent_ellipse.scene_scale
-                original_center_x = self.parent_ellipse.original_center_x
-                original_center_y = self.parent_ellipse.original_center_y
-                original_radius = self.parent_ellipse.original_radius
-                
-                # 元座標系での正確な位置を計算
-                orig_x = original_center_x + original_radius * math.cos(new_angle)
-                orig_y = original_center_y + original_radius * math.sin(new_angle)
-                
-                # position座標を高精度で更新
-                self.point_data.position.x = round(orig_x, 6)
-                self.point_data.position.y = round(orig_y, 6)
+                self.point_data.position.x = constrained_x / scale
+                self.point_data.position.y = constrained_y / scale
                 
                 # 累積角度もリセット（ドラッグ完了時）
                 if hasattr(self.point_data, '_accumulated_angle'):
@@ -1319,8 +1310,8 @@ class CircumferencePointItem(QGraphicsEllipseItem):
                 if hasattr(self.point_data, '_last_angle'):
                     delattr(self.point_data, '_last_angle')
             
-            # ドラッグ完了後は再描画不要（既に正しい位置にある）
-            # self.parent_ellipse.update_circumference_display()
+            # ドラッグ完了後に表示を更新
+            self.parent_ellipse.update_circumference_display()
             
             event.accept()
 
@@ -1670,38 +1661,35 @@ class ResizableEllipseItem(ResizableGraphicsItem):
             if hasattr(point, 'position') and point.position:
                 # 初期設定時のみ：vehicle.jsonの座標から角度を計算して保存
                 if not hasattr(point, '_calculated_angle'):
-                    # 座標系統一：元のvehicle.json座標系（スケール無し）で角度計算
-                    original_center_x = self.original_center_x
-                    original_center_y = self.original_center_y
+                    # スケール整合性を確保：original_center_x/yを元座標系に変換
+                    if hasattr(self, 'original_center_x') and hasattr(self, 'original_center_y'):
+                        # 元座標系での中心座標（vehicle.json座標系）
+                        original_center_x = self.original_center_x / self.scene_scale
+                        original_center_y = self.original_center_y / self.scene_scale
+                    else:
+                        # フォールバック：現在の中心座標を元座標系に変換
+                        original_center_x = center_x / self.scene_scale
+                        original_center_y = center_y / self.scene_scale
                     
-                    # 元座標系での相対座標から高精度角度計算
-                    rel_x = float(point.position.x - original_center_x)
-                    rel_y = float(point.position.y - original_center_y)
+                    # 元の座標から角度を計算（両方とも元座標系で統一）
+                    rel_x = point.position.x - original_center_x
+                    rel_y = point.position.y - original_center_y
                     point._calculated_angle = math.atan2(rel_y, rel_x)
                     
-                    # 元座標での半径も記録（円制約検証用）
-                    point._original_radius = math.sqrt(rel_x * rel_x + rel_y * rel_y)
-                    
                     if DEBUG_MODE:
-                        print(f"[DEBUG] Point {i}: unified_center=({original_center_x}, {original_center_y}), "
-                              f"point_pos=({point.position.x}, {point.position.y}), "
-                              f"rel=({rel_x:.6f}, {rel_y:.6f}), angle={point._calculated_angle:.6f}, "
-                              f"orig_radius={point._original_radius:.2f}")
+                        print(f"[DEBUG] Point {i}: orig_center=({original_center_x:.2f}, {original_center_y:.2f}), "
+                              f"point_pos=({point.position.x:.2f}, {point.position.y:.2f}), "
+                              f"rel=({rel_x:.2f}, {rel_y:.2f}), angle={point._calculated_angle:.3f}")
                 
-                # 計算された角度を使用してシーン座標上の現在の円周上に配置
+                # 計算された角度を使用して現在の円周上に配置
                 display_x = center_x + radius * math.cos(point._calculated_angle)
                 display_y = center_y + radius * math.sin(point._calculated_angle)
                 
-                # 移動していない制御点のposition座標を円制約に従って更新
+                # 移動していない制御点の位置も更新（vehicle.json保存時の正確性を確保）
                 if not hasattr(point, '_user_moved') or not point._user_moved:
-                    # 元座標系での正確な位置を計算
-                    original_radius = self.original_radius
-                    orig_x = self.original_center_x + original_radius * math.cos(point._calculated_angle)
-                    orig_y = self.original_center_y + original_radius * math.sin(point._calculated_angle)
-                    
-                    # position座標を元座標系で更新
-                    point.position.x = round(orig_x, 6)  # 高精度で保持
-                    point.position.y = round(orig_y, 6)
+                    scale = self.scene_scale
+                    point.position.x = display_x / scale
+                    point.position.y = display_y / scale
             else:
                 # position座標がない場合：valueから角度を計算
                 angle = point.value * 2 * math.pi - math.pi / 2  # -π/2で上方向を0とする
