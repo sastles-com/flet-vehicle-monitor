@@ -173,6 +173,20 @@ class OCRData:
 
 
 @dataclass
+class BarData:
+    """バー（横棒）データクラス"""
+    name: str
+    type: str
+    shape: str
+    orientation: str  # "horizontal" or "vertical"
+    min_value: float
+    max_value: float
+    circumference: List[CircumferencePoint]
+    # 任意の追加フィールド（extraなど）を保持するための辞書
+    extra_fields: dict = None
+
+
+@dataclass
 class VehicleData:
     """vehicle.json用データクラス"""
     name: str
@@ -183,6 +197,7 @@ class VehicleData:
     icon: List[IconData]
     meter: List[MeterData]
     ocr: List[OCRData]
+    bar: List[BarData]  # 新規追加
     _original_json_data: dict = None  # 元のJSONデータを完全保持
     
     @property
@@ -199,6 +214,11 @@ class VehicleData:
     def ocrs(self) -> List[dict]:
         """OCRデータをdict形式で取得"""
         return self._original_json_data.get("ocr", []) if self._original_json_data else []
+    
+    @property
+    def bars(self) -> List[dict]:
+        """バーデータをdict形式で取得"""
+        return self._original_json_data.get("bar", []) if self._original_json_data else []
 
 
 @dataclass
@@ -5213,6 +5233,33 @@ class VehicleMonitorEditor(QMainWindow):
                 )
                 ocrs.append(ocr)
             
+            # バーデータを変換
+            bars = []
+            for bar_data in data.get("bar", []):
+                circumference_points = []
+                for point_data in bar_data.get("circumference", []):
+                    point = CircumferencePoint(
+                        position=Position(point_data["position"]["x"], point_data["position"]["y"]),
+                        value=point_data["value"]
+                    )
+                    circumference_points.append(point)
+                
+                # 既知フィールド以外をextra_fieldsに保存
+                known_fields = {"name", "type", "shape", "orientation", "min_value", "max_value", "circumference"}
+                extra_fields = {k: v for k, v in bar_data.items() if k not in known_fields}
+                
+                bar = BarData(
+                    name=bar_data["name"],
+                    type=bar_data["type"],
+                    shape=bar_data["shape"],
+                    orientation=bar_data.get("orientation", "horizontal"),
+                    min_value=bar_data.get("min_value", 0.0),
+                    max_value=bar_data.get("max_value", 1.0),
+                    circumference=circumference_points,
+                    extra_fields=extra_fields if extra_fields else None
+                )
+                bars.append(bar)
+            
             self.vehicle_data = VehicleData(
                 name=data["name"],
                 path=data["path"],
@@ -5222,6 +5269,7 @@ class VehicleMonitorEditor(QMainWindow):
                 icon=icons,
                 meter=meters,
                 ocr=ocrs,
+                bar=bars,  # 新規追加
                 _original_json_data=data.copy()  # 元のJSONデータを完全保持
             )
             
@@ -5456,7 +5504,8 @@ class VehicleMonitorEditor(QMainWindow):
                 "offset": 50,
                 "icon": [],
                 "meter": [], 
-                "ocr": []
+                "ocr": [],
+                "bar": []
             }
             print("デフォルト値でベース作成")
         
@@ -5464,6 +5513,7 @@ class VehicleMonitorEditor(QMainWindow):
         edited_icons = []
         edited_meters = []
         edited_ocrs = []
+        edited_bars = []
         
         # 現在の図形から編集されたパーツデータを生成
         for shape in self.canvas.shapes:
@@ -5515,12 +5565,31 @@ class VehicleMonitorEditor(QMainWindow):
                     "shape": "circle"
                 }
                 
-                # circumferenceポイントの取得
+                # circumferenceポイントの現在座標を直接記録（座標直接記録システム）
                 circumference_points = []
-                if hasattr(shape, 'circumference_points') and shape.circumference_points:
+                if hasattr(shape, 'circumference_items') and shape.circumference_items:
+                    for i, marker_item in enumerate(shape.circumference_items):
+                        if i < len(shape.circumference_points):
+                            # マーカーの現在位置を直接取得
+                            marker_pos = marker_item.pos()
+                            marker_center_x = marker_pos.x() + 16  # marker_size/2
+                            marker_center_y = marker_pos.y() + 16
+                            
+                            # スケール逆変換で元座標に戻す
+                            scale = getattr(shape, 'scene_scale', 1.0)
+                            original_x = marker_center_x / scale
+                            original_y = marker_center_y / scale
+                            
+                            point_data = shape.circumference_points[i]
+                            circumference_points.append({
+                                "position": {"x": round(original_x, 6), "y": round(original_y, 6)},
+                                "value": point_data.value
+                            })
+                elif hasattr(shape, 'circumference_points') and shape.circumference_points:
+                    # フォールバック: マーカーがない場合はposition座標を使用
                     for point in shape.circumference_points:
                         circumference_points.append({
-                            "position": {"x": round(point.position.x), "y": round(point.position.y)},
+                            "position": {"x": round(point.position.x, 6), "y": round(point.position.y, 6)},
                             "value": point.value
                         })
                 
@@ -5531,13 +5600,53 @@ class VehicleMonitorEditor(QMainWindow):
                     "circumference": circumference_points
                 })
                 edited_meters.append(meter_data)
+            
+            # BarShapeItemの処理を追加
+            elif hasattr(shape, '__class__') and shape.__class__.__name__ == 'BarShapeItem':
+                # バー形状: barとして扱う
+                # 元のbarデータから属性を継承（circumferenceのみ更新）
+                original_bar = self._find_original_part_data("bar", shape.name)
+                bar_data = original_bar.copy() if original_bar else {
+                    "name": shape.name,
+                    "type": "float",
+                    "shape": "bar",
+                    "orientation": getattr(shape, 'orientation', 'horizontal'),
+                    "min_value": 0.0,
+                    "max_value": 1.0
+                }
+                
+                # circumferenceポイントの現在座標を直接記録
+                circumference_points = []
+                if hasattr(shape, 'circumference_items') and shape.circumference_items:
+                    for i, marker_item in enumerate(shape.circumference_items):
+                        if i < len(shape.circumference_points):
+                            # マーカーの現在位置を直接取得（座標直接記録システム）
+                            marker_pos = marker_item.pos()
+                            marker_center_x = marker_pos.x() + 16  # marker_size/2
+                            marker_center_y = marker_pos.y() + 16
+                            
+                            # スケール逆変換で元座標に戻す
+                            scale = getattr(shape, 'scene_scale', 1.0)
+                            original_x = marker_center_x / scale
+                            original_y = marker_center_y / scale
+                            
+                            point_data = shape.circumference_points[i]
+                            circumference_points.append({
+                                "position": {"x": round(original_x, 6), "y": round(original_y, 6)},
+                                "value": point_data.value
+                            })
+                
+                # circumferenceデータのみ更新（他の属性は保持）
+                bar_data["circumference"] = circumference_points
+                edited_bars.append(bar_data)
         
         # 編集されたパーツデータで置換（その他要素は保持）
         vehicle_json["icon"] = edited_icons
         vehicle_json["meter"] = edited_meters
         vehicle_json["ocr"] = edited_ocrs
+        vehicle_json["bar"] = edited_bars
         
-        print(f"✅ Vehicle JSON生成完了 - icon:{len(edited_icons)}, meter:{len(edited_meters)}, ocr:{len(edited_ocrs)}")
+        print(f"✅ Vehicle JSON生成完了 - icon:{len(edited_icons)}, meter:{len(edited_meters)}, ocr:{len(edited_ocrs)}, bar:{len(edited_bars)}")
         return vehicle_json
     
     def _find_original_part_data(self, part_type: str, part_name: str) -> dict:
