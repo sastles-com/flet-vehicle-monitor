@@ -2162,6 +2162,28 @@ class ImageCanvas(QGraphicsView):
         self.image_item.setZValue(-1000)
         # 原寸表示（スケール1.0固定）
         self.display_at_original_size()
+    
+    def load_image_from_data(self, image_data: bytes):
+        """バイナリデータから画像を読み込んで原寸表示（reload機能用）"""
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(image_data):
+            print("❌ Canvas: 画像データからQPixmapの作成に失敗")
+            return False
+            
+        # 既存の画像アイテムを削除
+        if self.image_item:
+            self.scene.removeItem(self.image_item)
+        
+        # 新しい画像を設定
+        self.original_pixmap = pixmap
+        self.image_item = self.scene.addPixmap(self.original_pixmap)
+        # 画像を最背景に設定
+        self.image_item.setZValue(-1000)
+        # 原寸表示（スケール1.0固定）
+        self.display_at_original_size()
+        
+        print(f"✅ Canvas: 画像更新完了 {pixmap.width()}x{pixmap.height()}")
+        return True
         
     def display_at_original_size(self):
         """画像を原寸（1:1）で表示"""
@@ -4205,6 +4227,38 @@ class VehicleMonitorEditor(QMainWindow):
         self.prev_btn.clicked.connect(self.previous_mode)
         right_layout.addWidget(self.prev_btn)
         
+        # reloadボタン（EDITモード限定）
+        self.reload_btn = QPushButton("🔄 Reload")
+        self.reload_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                border: 2px solid #229954;
+                padding: 8px 15px;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: bold;
+                min-width: 80px;
+                max-width: 80px;
+                min-height: 35px;
+                max-height: 35px;
+            }
+            QPushButton:hover {
+                background-color: #229954;
+                border-color: #1e8449;
+            }
+            QPushButton:pressed {
+                background-color: #1e8449;
+            }
+            QPushButton:disabled {
+                background-color: #7f8c8d;
+                border-color: #95a5a6;
+                color: #bdc3c7;
+            }
+        """)
+        self.reload_btn.clicked.connect(self.reload_full_image)
+        right_layout.addWidget(self.reload_btn)
+        
         # 中央タイトル（車種情報）
         self.title_label = QLabel("🚗 Vehicle Monitor")
         self.title_label.setStyleSheet("""
@@ -4324,6 +4378,14 @@ class VehicleMonitorEditor(QMainWindow):
         """現在のモードに基づいてナビゲーションボタンを更新"""
         if not hasattr(self, 'prev_btn') or not hasattr(self, 'next_btn'):
             return  # ボタンが初期化されていない場合はスキップ
+        
+        # reloadボタンの表示制御（EDITモード時のみ表示）
+        if hasattr(self, 'reload_btn'):
+            if self.current_mode == AppMode.EDIT:
+                self.reload_btn.setVisible(True)
+                self.reload_btn.setEnabled(True)
+            else:
+                self.reload_btn.setVisible(False)
         
         if self.current_mode == AppMode.CONFIG:
             # CONFIGモード: 戻るボタン無効化、進むボタンは"EDIT"
@@ -4956,6 +5018,71 @@ class VehicleMonitorEditor(QMainWindow):
         except Exception as e:
             print(f"RestAPI取得エラー: {e}")
             return None
+    
+    def reload_full_image(self):
+        """reloadボタン用: RestAPIで最新のfull_imageを再取得して画面更新"""
+        try:
+            print("=== Reload Full Image 開始 ===")
+            
+            # UI フィードバック: ボタンを一時的に無効化
+            if hasattr(self, 'reload_btn'):
+                self.reload_btn.setEnabled(False)
+                self.reload_btn.setText("🔄 Loading...")
+            
+            # ステータスバー表示
+            self.statusBar().showMessage("🔄 RestAPIからfull_imageを再取得中...")
+            
+            # config_dataが必要
+            if not hasattr(self, 'config_data') or not self.config_data:
+                error_msg = "❌ config.jsonデータが読み込まれていません"
+                print(error_msg)
+                self.statusBar().showMessage(error_msg)
+                return
+            
+            # RestAPIからfull_image取得
+            image_data = self.get_full_image_from_rest_api(self.config_data)
+            
+            if image_data:
+                # 画像データをCanvasに更新
+                self.update_canvas_image(image_data)
+                success_msg = f"✅ full_imageリロード完了 ({len(image_data)} bytes)"
+                print(success_msg)
+                self.statusBar().showMessage(success_msg)
+            else:
+                error_msg = "❌ RestAPIからの画像取得に失敗しました"
+                print(error_msg)
+                self.statusBar().showMessage(error_msg)
+                
+        except Exception as e:
+            error_msg = f"❌ Reloadエラー: {e}"
+            print(error_msg)
+            self.statusBar().showMessage(error_msg)
+            
+        finally:
+            # UI復元: ボタンを再有効化
+            if hasattr(self, 'reload_btn'):
+                self.reload_btn.setEnabled(True)
+                self.reload_btn.setText("🔄 Reload")
+    
+    def update_canvas_image(self, image_data: bytes):
+        """Canvasの画像をバイナリデータで更新"""
+        try:
+            # EDITモードのCanvasに画像を更新
+            if hasattr(self, 'canvas') and self.canvas:
+                success = self.canvas.load_image_from_data(image_data)
+                if success:
+                    print("✅ Canvas画像更新成功")
+                    return True
+                else:
+                    print("❌ Canvas画像更新失敗")
+                    return False
+            else:
+                print("❌ Canvas未初期化")
+                return False
+                
+        except Exception as e:
+            print(f"❌ update_canvas_image エラー: {e}")
+            return False
     
     def update_mode_display(self):
         """ヘッダーのモード表示を更新（改善版）"""
