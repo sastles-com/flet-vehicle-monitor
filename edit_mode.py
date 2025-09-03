@@ -4975,13 +4975,23 @@ class VehicleMonitorEditor(QMainWindow):
             print(f"MQTT送信エラー: {e}")
             return False
     
-    def get_full_image_from_rest_api(self, config_data: dict) -> Optional[bytes]:
+    def get_full_image_from_rest_api(self, config_data) -> Optional[bytes]:
         """ユーザー体験フロー Step 11: RestAPIでfull_imageを取得"""
         try:
             print("Step 11: RestAPIでfull_imageを取得中...")
             
-            rest_api_host = config_data.get("RestAPI", {}).get("host", "")
-            rest_api_port = config_data.get("RestAPI", {}).get("port", "8000")
+            # ConfigDataオブジェクトか辞書かを判定してアクセス
+            if hasattr(config_data, 'rest_api_host'):
+                # ConfigDataオブジェクトの場合
+                rest_api_host = config_data.rest_api_host
+                rest_api_port = config_data.rest_api_port
+            elif isinstance(config_data, dict):
+                # 辞書の場合
+                rest_api_host = config_data.get("RestAPI", {}).get("host", "")
+                rest_api_port = config_data.get("RestAPI", {}).get("port", "8000")
+            else:
+                print("ERROR: 不明なconfig_dataタイプ")
+                return None
             
             if not rest_api_host:
                 print("ERROR: RestAPI host情報がありません")
