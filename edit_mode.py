@@ -4976,9 +4976,63 @@ class VehicleMonitorEditor(QMainWindow):
             return False
     
     def get_full_image_from_rest_api(self, config_data) -> Optional[bytes]:
-        """ユーザー体験フロー Step 11: RestAPIでfull_imageを取得"""
+        """CONFIG→EDIT遷移用: RestAPIでfull_imageを取得（新撮影）"""
         try:
             print("Step 11: RestAPIでfull_imageを取得中...")
+            
+            # ConfigDataオブジェクトか辞書かを判定してアクセス
+            if hasattr(config_data, 'rest_api_host'):
+                # ConfigDataオブジェクトの場合
+                rest_api_host = config_data.rest_api_host
+                rest_api_port = config_data.rest_api_port
+            elif isinstance(config_data, dict):
+                # 辞書の場合
+                rest_api_host = config_data.get("RestAPI", {}).get("host", "")
+                rest_api_port = config_data.get("RestAPI", {}).get("port", "8000")
+            else:
+                print("ERROR: 不明なconfig_dataタイプ")
+                return None
+            
+            if not rest_api_host:
+                print("ERROR: RestAPI host情報がありません")
+                return None
+            
+            # full_image取得URL構築（新撮影）
+            image_url = f"http://{rest_api_host}:{rest_api_port}/full_image"
+            print(f"RestAPI取得先: {image_url}")
+            
+            # RestAPIからfull_imageを取得（新撮影）
+            import requests
+            
+            try:
+                print(f"RestAPI full_image取得開始: {image_url}")
+                response = requests.get(image_url, timeout=30)  # 新撮影なので30秒タイムアウト
+                response.raise_for_status()
+                
+                print(f"✅ RestAPI full_image取得成功: {len(response.content)} bytes")
+                return response.content
+                
+            except requests.exceptions.Timeout:
+                print("❌ RestAPI full_image取得タイムアウト（30秒）")
+                return None
+            except requests.exceptions.ConnectionError:
+                print(f"❌ RestAPI接続エラー: {rest_api_host}:{rest_api_port} に接続できません")
+                return None
+            except requests.exceptions.HTTPError as e:
+                print(f"❌ RestAPI HTTPエラー: {e.response.status_code} - {e}")
+                return None
+            except Exception as e:
+                print(f"❌ RestAPI予期しないエラー: {e}")
+                return None
+            
+        except Exception as e:
+            print(f"RestAPI取得エラー: {e}")
+            return None
+    
+    def get_existing_image_from_rest_api(self, config_data) -> Optional[bytes]:
+        """Reload用: RestAPIで既存imageを取得（再撮影しない）"""
+        try:
+            print("既存image取得中...")
             
             # ConfigDataオブジェクトか辞書かを判定してアクセス
             if hasattr(config_data, 'rest_api_host'):
@@ -5040,7 +5094,7 @@ class VehicleMonitorEditor(QMainWindow):
                 self.reload_btn.setText("🔄 Loading...")
             
             # ステータスバー表示
-            self.statusBar().showMessage("🔄 RestAPIからfull_imageを再取得中...")
+            self.statusBar().showMessage("🔄 RestAPIから既存imageを再取得中...")
             
             # config_dataが必要
             if not hasattr(self, 'config_data') or not self.config_data:
@@ -5049,13 +5103,13 @@ class VehicleMonitorEditor(QMainWindow):
                 self.statusBar().showMessage(error_msg)
                 return
             
-            # RestAPIからfull_image取得
-            image_data = self.get_full_image_from_rest_api(self.config_data)
+            # RestAPIから既存image取得（再撮影しない）
+            image_data = self.get_existing_image_from_rest_api(self.config_data)
             
             if image_data:
                 # 画像データをCanvasに更新
                 self.update_canvas_image(image_data)
-                success_msg = f"✅ full_imageリロード完了 ({len(image_data)} bytes)"
+                success_msg = f"✅ imageリロード完了 ({len(image_data)} bytes)"
                 print(success_msg)
                 self.statusBar().showMessage(success_msg)
             else:
@@ -6024,7 +6078,7 @@ class VehicleMonitorEditor(QMainWindow):
             self.canvas.centerOn(shape.get_item())
     
     def fetch_rest_api_image(self):
-        """REST APIからフルサイズ画像を取得"""
+        """REST APIからフルサイズ画像を取得（新撮影）- 未使用メソッド"""
         try:
             # config.jsonからREST API情報を取得
             if self.config_data:
