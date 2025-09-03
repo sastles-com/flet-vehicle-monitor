@@ -4997,23 +4997,23 @@ class VehicleMonitorEditor(QMainWindow):
                 print("ERROR: RestAPI host情報がありません")
                 return None
             
-            # full_image取得URL構築
-            full_image_url = f"http://{rest_api_host}:{rest_api_port}/full_image"
-            print(f"RestAPI取得先: {full_image_url}")
+            # image取得URL構築（既存のimage.jpgを取得）
+            image_url = f"http://{rest_api_host}:{rest_api_port}/image"
+            print(f"RestAPI取得先: {image_url}")
             
-            # RestAPIからfull_imageを取得
+            # RestAPIからimageを取得（再撮影しない）
             import requests
             
             try:
-                print(f"RestAPI full_image取得開始: {full_image_url}")
-                response = requests.get(full_image_url, timeout=15)
+                print(f"RestAPI image取得開始: {image_url}")
+                response = requests.get(image_url, timeout=15)
                 response.raise_for_status()
                 
-                print(f"✅ RestAPI full_image取得成功: {len(response.content)} bytes")
+                print(f"✅ RestAPI image取得成功: {len(response.content)} bytes")
                 return response.content
                 
             except requests.exceptions.Timeout:
-                print("❌ RestAPI full_image取得タイムアウト（15秒）")
+                print("❌ RestAPI image取得タイムアウト（15秒）")
                 return None
             except requests.exceptions.ConnectionError:
                 print(f"❌ RestAPI接続エラー: {rest_api_host}:{rest_api_port} に接続できません")
