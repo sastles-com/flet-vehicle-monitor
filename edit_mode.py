@@ -4768,59 +4768,47 @@ class VehicleMonitorEditor(QMainWindow):
         """超即座撮影：ボタン押下瞬間の最速撮影実装"""
         import time
         import requests
-        import threading
         
         # ボタン押下瞬間のタイムスタンプ
         button_press_time = time.time()
         print(f"⚡ ボタン押下瞬間タイムスタンプ: {button_press_time}")
         
         try:
-            # 事前準備済みデータを使用（最速化）
+            # 最速データ取得：事前準備済みデータ優先
+            config_data = None
+            base_url = None
+            
             if hasattr(self, '_capture_ready_data') and self._capture_ready_data:
                 config_data = self._capture_ready_data
-                print("✅ 事前準備済みデータを使用")
+                print("✅ 事前準備済みconfig使用")
             else:
-                # フォールバック：リアルタイム取得
-                config_data = None
+                # 最速リアルタイム取得
                 if hasattr(self.config_view, 'get_config_data'):
                     config_data = self.config_view.get_config_data()
-                print("⚠️ リアルタイムデータ取得（遅延要因）")
+                print("⚠️ リアルタイムconfig取得（遅延）")
             
-            if not config_data:
-                print("ERROR: config.jsonデータが見つかりません")
-                return
-            
-            # RestAPI情報（事前準備済みまたは即座取得）
             if hasattr(self, '_capture_ready_url') and self._capture_ready_url:
                 base_url = self._capture_ready_url
                 print("✅ 事前準備済みURL使用")
-            else:
+            elif config_data:
                 rest_api_host = config_data.get("RestAPI", {}).get("host", "")
                 rest_api_port = config_data.get("RestAPI", {}).get("port", "8000")
                 base_url = f"http://{rest_api_host}:{rest_api_port}"
-                print("⚠️ リアルタイムURL構築（遅延要因）")
+                print("⚠️ リアルタイムURL構築（遅延）")
             
-            if not base_url or base_url == "http://:8000":
-                print("ERROR: RestAPI URL情報がありません")
+            if not config_data or not base_url or base_url == "http://:8000":
+                print("ERROR: 必要なデータが不足、撮影を中止")
+                self.switch_to_mode(AppMode.EDIT)
                 return
             
-            # 超即座撮影：最小限の処理でAPI呼び出し
-            timestamp = int(button_press_time * 1000)  # ボタン押下瞬間を使用
+            # 最速撮影実行：スレッド化せずに直接実行
+            timestamp = int(button_press_time * 1000)
+            image_url = f"{base_url}/instant_capture?timestamp={timestamp}"
             
-            # 最速エンドポイント使用を試行、フォールバック付き
-            use_instant_capture = True  # 超高速エンドポイント使用フラグ
-            
-            if use_instant_capture:
-                image_url = f"{base_url}/instant_capture?timestamp={timestamp}"
-                print("🚀 超高速エンドポイント(/instant_capture)使用")
-            else:
-                image_url = f"{base_url}/full_image?timestamp={timestamp}"
-                print("📸 標準エンドポイント(/full_image)使用")
-            
-            # 撮影開始瞬間のタイムスタンプ（最速処理後）
+            # 撮影API呼び出し開始タイムスタンプ
             capture_start_time = time.time()
             delay_from_button = capture_start_time - button_press_time
-            print(f"🚀 撮影API呼び出し開始: {capture_start_time} (ボタン押下から{delay_from_button:.3f}秒後)")
+            print(f"🚀 /instant_capture 直接呼び出し開始: {delay_from_button:.3f}秒後")
             
             # 撮影結果を格納する変数
             capture_result = {'image_data': None, 'success': False, 'duration': 0}
@@ -4933,12 +4921,36 @@ class VehicleMonitorEditor(QMainWindow):
             # 撮影完了待機（最大30秒）
             capture_thread.join(timeout=30)
             
+            # 1. 撮影成功確認後、MQTT送信実行
+            if capture_result['success']:
+                print("📡 Step 1: MQTT送信開始（撮影完了後）")
+                try:
+                    self.mqtt_service.send_config(config_data)
+                    print("✅ MQTT config.json送信完了")
+                except Exception as mqtt_error:
+                    print(f"⚠️ MQTT送信失敗（続行）: {mqtt_error}")
+                
+                # 2. /imageエンドポイントで保存済みimage.jpgを取得
+                print("🖼️ Step 2: /imageエンドポイントから保存済み画像取得")
+                try:
+                    image_endpoint = f"{base_url}/image"
+                    image_response = requests.get(image_endpoint, timeout=10)
+                    image_response.raise_for_status()
+                    final_image_data = image_response.content
+                    print(f"✅ 保存済みimage.jpg取得成功: {len(final_image_data)} bytes")
+                except Exception as image_error:
+                    print(f"⚠️ /image取得失敗、撮影データを使用: {image_error}")
+                    final_image_data = capture_result['image_data']
+            else:
+                print("❌ 撮影失敗、MQTT送信とimage取得をスキップ")
+                final_image_data = None
+            
             # EDITモードに切り替え
             self.switch_to_mode(AppMode.EDIT)
             self.is_initial_edit_transition = False
             
-            # 撮影結果を画面に表示
-            if capture_result['success'] and capture_result['image_data']:
+            # 最終的な画像データを画面に表示
+            if final_image_data:
                 try:
                     import tempfile
                     import os
@@ -4950,15 +4962,15 @@ class VehicleMonitorEditor(QMainWindow):
                     self.canvas.load_image(tmp_path)
                     os.unlink(tmp_path)
                     
-                    print(f"✅ 超即座撮影EDITモード表示完了（総時間: {capture_result['duration']:.3f}秒）")
+                    print(f"✅ 最適化処理フロー完了（総時間: {capture_result['duration']:.3f}秒）")
                     
                 except Exception as e:
                     print(f"❌ 画像表示エラー: {e}")
             else:
-                print("⚠️ 超即座撮影失敗、EDITモードは画像なしで開始")
+                print("⚠️ 画像取得失敗、EDITモードは画像なしで開始")
             
         except Exception as e:
-            print(f"❌ 超即座撮影処理エラー: {e}")
+            print(f"❌ EDITボタン処理エラー: {e}")
             self.switch_to_mode(AppMode.EDIT)
     
     def prepare_capture_data(self):
