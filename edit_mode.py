@@ -2182,6 +2182,14 @@ class ImageCanvas(QGraphicsView):
         # 原寸表示（スケール1.0固定）
         self.display_at_original_size()
         
+        # UI強制更新（表示問題解決）
+        self.scene.update()
+        self.viewport().update()
+        self.update()
+        
+        # シーン範囲を画像サイズに合わせる
+        self.scene.setSceneRect(self.original_pixmap.rect())
+        
         print(f"✅ Canvas: 画像更新完了 {pixmap.width()}x{pixmap.height()}")
         return True
         
@@ -4692,7 +4700,9 @@ class VehicleMonitorEditor(QMainWindow):
             # CONFIG→EDIT遷移時に超即座撮影開始（最速実装）
             print("=== EDITボタン押下瞬間: 超即座撮影開始 ===")
             
-            # RestAPIテストをスキップして高速化
+            # RestAPIテストをスキップして高速化（ConfigViewに設定）
+            if hasattr(self, 'config_view') and self.config_view:
+                self.config_view._skip_restapi_test = True
             self._skip_restapi_test = True
             
             self.ultra_immediate_capture_and_edit_transition()
@@ -4780,14 +4790,29 @@ class VehicleMonitorEditor(QMainWindow):
         print(f"⚡ ボタン押下: {button_time}")
         
         try:
-            # 最速URL取得：事前準備済み優先、なければ固定値
+            # 最速URL取得：事前準備済み優先、なければconfig.jsonから取得
             if hasattr(self, '_capture_ready_url') and self._capture_ready_url:
                 base_url = self._capture_ready_url
                 print("✅ 事前準備URL使用")
             else:
-                # 固定値で最速化（設定読み込みをスキップ）
-                base_url = "http://192.168.1.209:8000"  # IPアドレス直接指定で最速化
-                print("⚠️ 固定IP使用")
+                # config.jsonからRestAPI設定を取得
+                try:
+                    if hasattr(self.config_view, 'get_config_data'):
+                        config_data = self.config_view.get_config_data()
+                        if config_data:
+                            rest_host = config_data.get("RestAPI", {}).get("host", "raspi-t40cd.local")
+                            rest_port = config_data.get("RestAPI", {}).get("port", "8000")
+                            base_url = f"http://{rest_host}:{rest_port}"
+                            print(f"✅ config.json使用: {base_url}")
+                        else:
+                            base_url = "http://raspi-t40cd.local:8000"
+                            print("⚠️ デフォルト値使用")
+                    else:
+                        base_url = "http://raspi-t40cd.local:8000"
+                        print("⚠️ デフォルト値使用")
+                except Exception as e:
+                    base_url = "http://raspi-t40cd.local:8000"
+                    print(f"⚠️ config取得エラー、デフォルト値使用: {e}")
             
             # 撮影実行（最小限）
             capture_url = f"{base_url}/instant_capture"
@@ -4809,6 +4834,39 @@ class VehicleMonitorEditor(QMainWindow):
             
             # 成功時のみ後続処理実行
             if success:
+                # config.jsonデータ設定（Reload機能に必要）
+                try:
+                    if hasattr(self.config_view, 'get_config_data'):
+                        config_data = self.config_view.get_config_data()
+                        if config_data:
+                            # 最小限のconfig.jsonデータ設定
+                            from dataclasses import dataclass
+                            self.config_data = ConfigData(
+                                mqtt_host=config_data.get("mqtt", {}).get("host", ""),
+                                mqtt_port=config_data.get("mqtt", {}).get("port", ""),
+                                mqtt_ws_port=config_data.get("mqtt", {}).get("wsPort", ""),
+                                rest_api_host=config_data.get("RestAPI", {}).get("host", ""),
+                                rest_api_port=config_data.get("RestAPI", {}).get("port", "8000"),
+                                camera_width=config_data.get("camera", {}).get("width", 2304),
+                                camera_height=config_data.get("camera", {}).get("height", 1296),
+                                camera_scale=config_data.get("camera", {}).get("scale", 1.0),
+                                frame=config_data.get("frame", 0),
+                                bench=config_data.get("bench", ""),
+                                path=config_data.get("path", "")
+                            )
+                            # キャンバスサイズ設定
+                            if hasattr(self, 'canvas') and self.canvas:
+                                self.canvas.set_full_image_size(
+                                    self.config_data.camera_width,
+                                    self.config_data.camera_height
+                                )
+                            
+                            print("✅ config.jsonデータ設定完了")
+                        else:
+                            print("⚠️ config.jsonデータ取得失敗")
+                except Exception as config_error:
+                    print(f"⚠️ config.jsonデータ設定エラー: {config_error}")
+                
                 # EDITモードに切り替え
                 self.switch_to_mode(AppMode.EDIT)
                 self.is_initial_edit_transition = False
@@ -4825,6 +4883,12 @@ class VehicleMonitorEditor(QMainWindow):
                             tmp_path = tmp_file.name
                         self.canvas.load_image(tmp_path)
                         os.unlink(tmp_path)
+                        
+                        # 強制UI更新（画像表示問題解決）
+                        self.canvas.scene.update()
+                        self.canvas.viewport().update() 
+                        self.canvas.update()
+                        
                         print(f"🖼️ 画像表示完了")
                     else:
                         print("⚠️ 画像取得失敗、表示スキップ")
@@ -4834,12 +4898,56 @@ class VehicleMonitorEditor(QMainWindow):
                 end_time = time.time() - button_time
                 print(f"🎯 全処理完了: {end_time:.3f}秒")
             else:
-                # 失敗時もEDITモードに遷移
+                # 失敗時もconfig.jsonデータ設定してEDITモードに遷移
+                try:
+                    if hasattr(self.config_view, 'get_config_data'):
+                        config_data = self.config_view.get_config_data()
+                        if config_data:
+                            self.config_data = ConfigData(
+                                mqtt_host=config_data.get("mqtt", {}).get("host", ""),
+                                mqtt_port=config_data.get("mqtt", {}).get("port", ""),
+                                mqtt_ws_port=config_data.get("mqtt", {}).get("wsPort", ""),
+                                rest_api_host=config_data.get("RestAPI", {}).get("host", ""),
+                                rest_api_port=config_data.get("RestAPI", {}).get("port", "8000"),
+                                camera_width=config_data.get("camera", {}).get("width", 2304),
+                                camera_height=config_data.get("camera", {}).get("height", 1296),
+                                camera_scale=config_data.get("camera", {}).get("scale", 1.0),
+                                frame=config_data.get("frame", 0),
+                                bench=config_data.get("bench", ""),
+                                path=config_data.get("path", "")
+                            )
+                            print("✅ 失敗時もconfig.jsonデータ設定完了")
+                except Exception:
+                    print("⚠️ 失敗時config.jsonデータ設定エラー")
+                
                 self.switch_to_mode(AppMode.EDIT)
                 
         except Exception as e:
             error_time = time.time() - button_time
             print(f"❌ エラー ({error_time:.3f}秒): {e}")
+            
+            # エラー時でもconfig.jsonデータ設定を試行
+            try:
+                if hasattr(self.config_view, 'get_config_data'):
+                    config_data = self.config_view.get_config_data()
+                    if config_data:
+                        self.config_data = ConfigData(
+                            mqtt_host=config_data.get("mqtt", {}).get("host", ""),
+                            mqtt_port=config_data.get("mqtt", {}).get("port", ""),
+                            mqtt_ws_port=config_data.get("mqtt", {}).get("wsPort", ""),
+                            rest_api_host=config_data.get("RestAPI", {}).get("host", ""),
+                            rest_api_port=config_data.get("RestAPI", {}).get("port", "8000"),
+                            camera_width=config_data.get("camera", {}).get("width", 2304),
+                            camera_height=config_data.get("camera", {}).get("height", 1296),
+                            camera_scale=config_data.get("camera", {}).get("scale", 1.0),
+                            frame=config_data.get("frame", 0),
+                            bench=config_data.get("bench", ""),
+                            path=config_data.get("path", "")
+                        )
+                        print("✅ エラー時もconfig.jsonデータ設定完了")
+            except Exception:
+                print("⚠️ エラー時config.jsonデータ設定も失敗")
+            
             self.switch_to_mode(AppMode.EDIT)
     
     def prepare_capture_data(self):

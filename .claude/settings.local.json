@@ -9,7 +9,9 @@
       "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)",
       "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)",
       "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)",
-      "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)"
+      "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)",
+      "Read(//c/Users/table0/vm/ros2_ws/src/**)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
