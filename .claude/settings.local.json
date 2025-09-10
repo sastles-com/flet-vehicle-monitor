@@ -4,7 +4,12 @@
       "WebSearch",
       "Bash(python test:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)",
+      "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)",
+      "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)",
+      "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)",
+      "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)"
     ],
     "deny": [],
     "ask": []

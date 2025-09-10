@@ -4806,7 +4806,16 @@ class VehicleMonitorEditor(QMainWindow):
             
             # 超即座撮影：最小限の処理でAPI呼び出し
             timestamp = int(button_press_time * 1000)  # ボタン押下瞬間を使用
-            image_url = f"{base_url}/full_image?timestamp={timestamp}"
+            
+            # 最速エンドポイント使用を試行、フォールバック付き
+            use_instant_capture = True  # 超高速エンドポイント使用フラグ
+            
+            if use_instant_capture:
+                image_url = f"{base_url}/instant_capture?timestamp={timestamp}"
+                print("🚀 超高速エンドポイント(/instant_capture)使用")
+            else:
+                image_url = f"{base_url}/full_image?timestamp={timestamp}"
+                print("📸 標準エンドポイント(/full_image)使用")
             
             # 撮影開始瞬間のタイムスタンプ（最速処理後）
             capture_start_time = time.time()
@@ -4818,6 +4827,8 @@ class VehicleMonitorEditor(QMainWindow):
             
             def immediate_capture():
                 """最速撮影処理（別スレッド）"""
+                nonlocal image_url  # 外部変数にアクセス
+                
                 try:
                     # 最小限のヘッダーで最速API呼び出し
                     headers = {'Cache-Control': 'no-cache'}
@@ -4827,7 +4838,7 @@ class VehicleMonitorEditor(QMainWindow):
                     response = requests.get(
                         image_url, 
                         headers=headers, 
-                        timeout=30,
+                        timeout=25,  # 超高速エンドポイント用に短縮
                         stream=False  # ストリーミング無効で高速化
                     )
                     response.raise_for_status()
@@ -4846,6 +4857,37 @@ class VehicleMonitorEditor(QMainWindow):
                     
                 except Exception as e:
                     print(f"❌ 超即座撮影失敗: {e}")
+                    
+                    # フォールバック: 標準エンドポイントで再試行
+                    if use_instant_capture and "/instant_capture" in image_url:
+                        try:
+                            print("🔄 標準エンドポイントで再試行...")
+                            fallback_url = f"{base_url}/full_image?timestamp={timestamp}"
+                            
+                            fallback_response = requests.get(
+                                fallback_url, 
+                                headers=headers, 
+                                timeout=30,
+                                stream=False
+                            )
+                            fallback_response.raise_for_status()
+                            
+                            capture_end_time = time.time()
+                            total_duration = capture_end_time - button_press_time
+                            api_duration = capture_end_time - capture_start_time
+                            
+                            capture_result['image_data'] = fallback_response.content
+                            capture_result['success'] = True
+                            capture_result['duration'] = total_duration
+                            
+                            print(f"✅ フォールバック撮影成功: {len(fallback_response.content)} bytes")
+                            print(f"   - ボタン押下から撮影完了: {total_duration:.3f}秒")
+                            print(f"   - API呼び出し時間: {api_duration:.3f}秒")
+                            return
+                            
+                        except Exception as fallback_error:
+                            print(f"❌ フォールバック撮影も失敗: {fallback_error}")
+                    
                     capture_result['success'] = False
             
             # 別スレッドで撮影開始（UIブロッキング回避）
