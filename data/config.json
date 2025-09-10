@@ -5,8 +5,8 @@
     "wsPort": "9001"
   },
   "RestAPI": {
-    "host": "raspi-t40cd.local",
-    "_host": "192.168.1.209",
+    "host": "172.20.10.2",
+    "_host": "raspi-t40cd.local",
     "port": "8000"
   },
   "camera": {

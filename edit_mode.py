@@ -3970,6 +3970,11 @@ class VehicleMonitorEditor(QMainWindow):
     
     def test_restapi_connection(self, host: str, port: str):
         """RestAPI導通テスト（非同期）"""
+        # 高速化のためスキップ機能
+        if hasattr(self, '_skip_restapi_test') and self._skip_restapi_test:
+            print("RestAPI: テストをスキップ（高速化）")
+            return
+            
         def test_in_background():
             try:
                 import requests
@@ -4871,27 +4876,17 @@ class VehicleMonitorEditor(QMainWindow):
                 self.switch_to_mode(AppMode.EDIT)
                 self.is_initial_edit_transition = False
                 
-                # 保存されたimage.jpgを表示用に取得
+                # /instant_captureのレスポンス画像を直接使用（高速化）
                 try:
-                    image_response = requests.get(f"{base_url}/image", timeout=3)
-                    if image_response.status_code == 200:
-                        # 画像表示（最小限）
-                        import tempfile
-                        import os
-                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
-                            tmp_file.write(image_response.content)
-                            tmp_path = tmp_file.name
-                        self.canvas.load_image(tmp_path)
-                        os.unlink(tmp_path)
-                        
-                        # 強制UI更新（画像表示問題解決）
-                        self.canvas.scene.update()
-                        self.canvas.viewport().update() 
-                        self.canvas.update()
-                        
-                        print(f"🖼️ 画像表示完了")
-                    else:
-                        print("⚠️ 画像取得失敗、表示スキップ")
+                    # レスポンス画像データを直接使用
+                    self.canvas.load_image_from_data(response.content)
+                    
+                    # 強制UI更新（画像表示問題解決）
+                    self.canvas.scene.update()
+                    self.canvas.viewport().update() 
+                    self.canvas.update()
+                    
+                    print(f"🖼️ 画像表示完了")
                 except Exception as display_error:
                     print(f"⚠️ 画像表示エラー: {display_error}")
                 

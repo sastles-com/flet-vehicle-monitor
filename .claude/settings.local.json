@@ -11,7 +11,13 @@
       "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)",
       "Read(C:\\Users\\table0\\vm\\ros2_ws\\src/**)",
       "Read(//c/Users/table0/vm/ros2_ws/src/**)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(nslookup:*)",
+      "Bash(ping:*)",
+      "Bash(ipconfig)",
+      "Bash(arp:*)",
+      "Bash(findstr:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []
