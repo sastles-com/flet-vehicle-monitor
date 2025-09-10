@@ -4683,8 +4683,9 @@ class VehicleMonitorEditor(QMainWindow):
     def next_mode(self):
         """次のモードに遷移または監視開始"""
         if self.current_mode == AppMode.CONFIG:
-            # CONFIG→EDIT遷移時にデータロード
-            self.transition_to_edit_mode()
+            # CONFIG→EDIT遷移時に即座撮影開始
+            print("=== EDITボタン押下: 即座にfull_image撮影開始 ===")
+            self.transition_to_edit_mode_with_immediate_capture()
         elif self.current_mode == AppMode.EDIT:
             # EDIT→MONITOR遷移時にデータ保存・送信処理
             self.transition_to_monitor_mode()
@@ -4758,6 +4759,128 @@ class VehicleMonitorEditor(QMainWindow):
             print("EDIT戻り操作: vehicle.jsonファイルダイアログを表示しません")
         
         self.switch_to_mode(prev_mode)
+    
+    def transition_to_edit_mode_with_immediate_capture(self):
+        """CONFIG→EDIT遷移時の即座撮影実装（ボタン押下瞬間撮影）"""
+        try:
+            print("=== CONFIG→EDIT遷移（即座撮影モード）開始 ===")
+            
+            # EDITボタン押下と同時にカーソルを読み込み中に変更
+            from PySide6.QtCore import Qt
+            self.setCursor(Qt.WaitCursor)
+            
+            # 最優先: config.jsonデータ取得（撮影に必要）
+            config_data = None
+            if hasattr(self.config_view, 'get_config_data'):
+                config_data = self.config_view.get_config_data()
+            
+            if not config_data:
+                print("ERROR: config.jsonデータが見つかりません")
+                return
+            
+            print("🚀 最優先: ボタン押下瞬間でfull_image撮影開始")
+            
+            # 並列処理用のスレッドプール準備
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            import time
+            
+            # タイムスタンプ記録（ボタン押下瞬間）
+            capture_start_time = time.time()
+            print(f"📸 撮影開始タイムスタンプ: {capture_start_time}")
+            
+            # 並列実行するタスクを定義
+            tasks = {}
+            
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                # Task 1: 即座にfull_image撮影開始（最優先）
+                print("📸 Task 1: full_image撮影タスク開始")
+                capture_future = executor.submit(self.get_full_image_from_rest_api, config_data)
+                tasks['capture'] = capture_future
+                
+                # Task 2: config.jsonのMQTT送信（並列実行）
+                print("📡 Task 2: MQTT送信タスク開始")
+                mqtt_future = executor.submit(self.send_config_to_mqtt, config_data)
+                tasks['mqtt'] = mqtt_future
+                
+                # 結果を収集
+                results = {}
+                for task_name, future in tasks.items():
+                    try:
+                        result = future.result(timeout=35)  # 最大35秒待機
+                        results[task_name] = result
+                        print(f"✅ {task_name} task completed: {result is not None if task_name == 'capture' else result}")
+                    except Exception as e:
+                        print(f"❌ {task_name} task failed: {e}")
+                        results[task_name] = None
+            
+            # 撮影完了時間計測
+            capture_end_time = time.time()
+            capture_duration = capture_end_time - capture_start_time
+            print(f"📸 撮影完了時間: {capture_duration:.2f}秒")
+            
+            # データ設定処理（撮影完了後）
+            self.config_data = ConfigData(
+                mqtt_host=config_data.get("mqtt", {}).get("host", ""),
+                mqtt_port=config_data.get("mqtt", {}).get("port", ""),
+                mqtt_ws_port=config_data.get("mqtt", {}).get("wsPort", ""),
+                rest_api_host=config_data.get("RestAPI", {}).get("host", ""),
+                rest_api_port=config_data.get("RestAPI", {}).get("port", ""),
+                camera_width=config_data.get("camera", {}).get("width", 2304),
+                camera_height=config_data.get("camera", {}).get("height", 1296),
+                camera_scale=config_data.get("camera", {}).get("scale", 1.0),
+                frame=config_data.get("frame", 0),
+                bench=config_data.get("bench", ""),
+                path=config_data.get("path", "")
+            )
+            
+            # キャンバスのフルサイズ設定
+            self.canvas.set_full_image_size(
+                self.config_data.camera_width,
+                self.config_data.camera_height
+            )
+            
+            # 撮影結果を画面に表示
+            image_data = results.get('capture')
+            if image_data:
+                print(f"✅ 即座撮影成功: {len(image_data)} bytes（{capture_duration:.2f}秒）")
+                try:
+                    # RestAPI画像データから一時ファイル作成してEDITモードに表示
+                    import tempfile
+                    import os
+                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                        tmp_file.write(image_data)
+                        tmp_path = tmp_file.name
+                    
+                    print(f"EDITモード画面にボタン押下瞬間の画像を表示: {tmp_path}")
+                    self.canvas.load_image(tmp_path)
+                    
+                    # 一時ファイルを削除
+                    os.unlink(tmp_path)
+                    print("✅ EDITモードで即座撮影画像表示完了")
+                    
+                except Exception as e:
+                    print(f"❌ 即座撮影画像表示エラー: {e}")
+            else:
+                print("⚠️ 即座撮影失敗、EDITモードは画像なしで開始")
+            
+            # EDITモードに切り替え
+            self.switch_to_mode(AppMode.EDIT)
+            
+            # 初回遷移完了後にフラグをリセット
+            self.is_initial_edit_transition = False
+            
+            # MQTT送信結果確認
+            mqtt_success = results.get('mqtt', False)
+            if mqtt_success:
+                print("✅ 並列MQTT送信成功")
+            else:
+                print("⚠️ 並列MQTT送信失敗（継続）")
+            
+            print("✅ CONFIG→EDIT遷移（即座撮影モード）完了")
+            
+        except Exception as e:
+            print(f"CONFIG→EDIT即座撮影エラー: {e}")
+            self.switch_to_mode(AppMode.EDIT)  # エラーでもEDITモードに切り替え
     
     def transition_to_edit_mode(self):
         """CONFIG→EDIT遷移時のデータ受け渡し（ユーザー体験フロー対応）"""
