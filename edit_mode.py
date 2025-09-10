@@ -4615,6 +4615,10 @@ class VehicleMonitorEditor(QMainWindow):
                 # 既存の起動時ファイルダイアログ処理を維持
             else:
                 print("CONFIG戻り遷移: 既存config.jsonデータを保持")
+            
+            # CONFIGモード時に撮影準備を実行（最速化のため）
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(500, self.prepare_capture_data)  # 500ms後に事前準備実行
         elif mode == AppMode.EDIT:
             self.setup_edit_mode()
         elif mode == AppMode.MONITOR:
@@ -4683,9 +4687,9 @@ class VehicleMonitorEditor(QMainWindow):
     def next_mode(self):
         """次のモードに遷移または監視開始"""
         if self.current_mode == AppMode.CONFIG:
-            # CONFIG→EDIT遷移時に即座撮影開始
-            print("=== EDITボタン押下: 即座にfull_image撮影開始 ===")
-            self.transition_to_edit_mode_with_immediate_capture()
+            # CONFIG→EDIT遷移時に超即座撮影開始（最速実装）
+            print("=== EDITボタン押下瞬間: 超即座撮影開始 ===")
+            self.ultra_immediate_capture_and_edit_transition()
         elif self.current_mode == AppMode.EDIT:
             # EDIT→MONITOR遷移時にデータ保存・送信処理
             self.transition_to_monitor_mode()
@@ -4759,6 +4763,189 @@ class VehicleMonitorEditor(QMainWindow):
             print("EDIT戻り操作: vehicle.jsonファイルダイアログを表示しません")
         
         self.switch_to_mode(prev_mode)
+    
+    def ultra_immediate_capture_and_edit_transition(self):
+        """超即座撮影：ボタン押下瞬間の最速撮影実装"""
+        import time
+        import requests
+        import threading
+        
+        # ボタン押下瞬間のタイムスタンプ
+        button_press_time = time.time()
+        print(f"⚡ ボタン押下瞬間タイムスタンプ: {button_press_time}")
+        
+        try:
+            # 事前準備済みデータを使用（最速化）
+            if hasattr(self, '_capture_ready_data') and self._capture_ready_data:
+                config_data = self._capture_ready_data
+                print("✅ 事前準備済みデータを使用")
+            else:
+                # フォールバック：リアルタイム取得
+                config_data = None
+                if hasattr(self.config_view, 'get_config_data'):
+                    config_data = self.config_view.get_config_data()
+                print("⚠️ リアルタイムデータ取得（遅延要因）")
+            
+            if not config_data:
+                print("ERROR: config.jsonデータが見つかりません")
+                return
+            
+            # RestAPI情報（事前準備済みまたは即座取得）
+            if hasattr(self, '_capture_ready_url') and self._capture_ready_url:
+                base_url = self._capture_ready_url
+                print("✅ 事前準備済みURL使用")
+            else:
+                rest_api_host = config_data.get("RestAPI", {}).get("host", "")
+                rest_api_port = config_data.get("RestAPI", {}).get("port", "8000")
+                base_url = f"http://{rest_api_host}:{rest_api_port}"
+                print("⚠️ リアルタイムURL構築（遅延要因）")
+            
+            if not base_url or base_url == "http://:8000":
+                print("ERROR: RestAPI URL情報がありません")
+                return
+            
+            # 超即座撮影：最小限の処理でAPI呼び出し
+            timestamp = int(button_press_time * 1000)  # ボタン押下瞬間を使用
+            image_url = f"{base_url}/full_image?timestamp={timestamp}"
+            
+            # 撮影開始瞬間のタイムスタンプ（最速処理後）
+            capture_start_time = time.time()
+            delay_from_button = capture_start_time - button_press_time
+            print(f"🚀 撮影API呼び出し開始: {capture_start_time} (ボタン押下から{delay_from_button:.3f}秒後)")
+            
+            # 撮影結果を格納する変数
+            capture_result = {'image_data': None, 'success': False, 'duration': 0}
+            
+            def immediate_capture():
+                """最速撮影処理（別スレッド）"""
+                try:
+                    # 最小限のヘッダーで最速API呼び出し
+                    headers = {'Cache-Control': 'no-cache'}
+                    print(f"📸 即座API呼び出し: {image_url}")
+                    
+                    # 最速設定でHTTPリクエスト実行
+                    response = requests.get(
+                        image_url, 
+                        headers=headers, 
+                        timeout=30,
+                        stream=False  # ストリーミング無効で高速化
+                    )
+                    response.raise_for_status()
+                    
+                    capture_end_time = time.time()
+                    total_duration = capture_end_time - button_press_time
+                    api_duration = capture_end_time - capture_start_time
+                    
+                    capture_result['image_data'] = response.content
+                    capture_result['success'] = True
+                    capture_result['duration'] = total_duration
+                    
+                    print(f"✅ 超即座撮影成功: {len(response.content)} bytes")
+                    print(f"   - ボタン押下から撮影完了: {total_duration:.3f}秒")
+                    print(f"   - API呼び出し時間: {api_duration:.3f}秒")
+                    
+                except Exception as e:
+                    print(f"❌ 超即座撮影失敗: {e}")
+                    capture_result['success'] = False
+            
+            # 別スレッドで撮影開始（UIブロッキング回避）
+            capture_thread = threading.Thread(target=immediate_capture, daemon=True)
+            capture_thread.start()
+            
+            # UIカーソルを読み込み中に変更
+            from PySide6.QtCore import Qt
+            self.setCursor(Qt.WaitCursor)
+            
+            # 並行処理: config.jsonデータ設定（撮影と並行）
+            self.config_data = ConfigData(
+                mqtt_host=config_data.get("mqtt", {}).get("host", ""),
+                mqtt_port=config_data.get("mqtt", {}).get("port", ""),
+                mqtt_ws_port=config_data.get("mqtt", {}).get("wsPort", ""),
+                rest_api_host=rest_api_host,
+                rest_api_port=rest_api_port,
+                camera_width=config_data.get("camera", {}).get("width", 2304),
+                camera_height=config_data.get("camera", {}).get("height", 1296),
+                camera_scale=config_data.get("camera", {}).get("scale", 1.0),
+                frame=config_data.get("frame", 0),
+                bench=config_data.get("bench", ""),
+                path=config_data.get("path", "")
+            )
+            
+            # キャンバス設定
+            self.canvas.set_full_image_size(
+                self.config_data.camera_width,
+                self.config_data.camera_height
+            )
+            
+            # 並行処理: MQTT送信（撮影と並行）
+            def mqtt_send():
+                try:
+                    success = self.send_config_to_mqtt(config_data)
+                    print(f"📡 並行MQTT送信: {'成功' if success else '失敗'}")
+                except Exception as e:
+                    print(f"📡 並行MQTT送信エラー: {e}")
+            
+            mqtt_thread = threading.Thread(target=mqtt_send, daemon=True)
+            mqtt_thread.start()
+            
+            # 撮影完了待機（最大30秒）
+            capture_thread.join(timeout=30)
+            
+            # EDITモードに切り替え
+            self.switch_to_mode(AppMode.EDIT)
+            self.is_initial_edit_transition = False
+            
+            # 撮影結果を画面に表示
+            if capture_result['success'] and capture_result['image_data']:
+                try:
+                    import tempfile
+                    import os
+                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                        tmp_file.write(capture_result['image_data'])
+                        tmp_path = tmp_file.name
+                    
+                    print(f"🖼️ ボタン押下瞬間の画像を表示: {tmp_path}")
+                    self.canvas.load_image(tmp_path)
+                    os.unlink(tmp_path)
+                    
+                    print(f"✅ 超即座撮影EDITモード表示完了（総時間: {capture_result['duration']:.3f}秒）")
+                    
+                except Exception as e:
+                    print(f"❌ 画像表示エラー: {e}")
+            else:
+                print("⚠️ 超即座撮影失敗、EDITモードは画像なしで開始")
+            
+        except Exception as e:
+            print(f"❌ 超即座撮影処理エラー: {e}")
+            self.switch_to_mode(AppMode.EDIT)
+    
+    def prepare_capture_data(self):
+        """CONFIGモード時の撮影事前準備（最速化のため）"""
+        try:
+            if hasattr(self.config_view, 'get_config_data'):
+                config_data = self.config_view.get_config_data()
+                if config_data:
+                    self._capture_ready_data = config_data
+                    
+                    # RestAPI URL事前構築
+                    rest_api_host = config_data.get("RestAPI", {}).get("host", "")
+                    rest_api_port = config_data.get("RestAPI", {}).get("port", "8000")
+                    if rest_api_host:
+                        self._capture_ready_url = f"http://{rest_api_host}:{rest_api_port}"
+                        print(f"📋 撮影準備完了: {self._capture_ready_url}")
+                    else:
+                        self._capture_ready_url = None
+                        print("⚠️ RestAPI host情報なし")
+                else:
+                    self._capture_ready_data = None
+                    self._capture_ready_url = None
+            else:
+                self._capture_ready_data = None
+                self._capture_ready_url = None
+        except Exception as e:
+            print(f"❌ 撮影準備エラー: {e}")
+            self._capture_ready_data = None
+            self._capture_ready_url = None
     
     def transition_to_edit_mode_with_immediate_capture(self):
         """CONFIG→EDIT遷移時の即座撮影実装（ボタン押下瞬間撮影）"""
