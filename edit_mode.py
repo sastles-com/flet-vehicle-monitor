@@ -4846,49 +4846,121 @@ class VehicleMonitorEditor(QMainWindow):
             self.switch_to_mode(AppMode.EDIT)  # エラーでもEDITモードに切り替え
     
     def transition_to_monitor_mode(self):
-        """EDIT→MONITOR遷移時のデータ保存・送信処理"""
+        """EDIT→MONITOR遷移時のデータ保存・送信処理（処理順序最適化・詳細ログ強化）"""
         try:
             print("=== EDIT→MONITOR遷移が開始されました ===")
             print("EDIT→MONITOR移行: データ保存・送信処理を実行中...")
             
-            # デバッグ: 現在の状態を確認
-            print(f"DEBUG: current_vehicle_path = {self.current_vehicle_path}")
-            print(f"DEBUG: canvas.shapes count = {len(self.canvas.shapes) if self.canvas.shapes else 0}")
+            # 詳細ログ: 現在の状態を確認
+            print(f"📋 現在の状態確認:")
+            print(f"   - vehicle.jsonパス: {self.current_vehicle_path}")
+            print(f"   - キャンバス図形数: {len(self.canvas.shapes) if self.canvas.shapes else 0}")
+            print(f"   - vehicle_data存在: {self.vehicle_data is not None}")
+            print(f"   - MQTT service利用可能: {self.mqtt_service is not None}")
+            
             if self.canvas.shapes:
-                print("DEBUG: 図形一覧:")
+                print("📐 図形一覧:")
                 for i, shape in enumerate(self.canvas.shapes):
-                    print(f"  {i+1}. {shape.name} ({shape.category.value})")
-            
-            # 1. vehicle.jsonを上書き保存（パスが記録されており、図形が存在する場合）
-            if self.current_vehicle_path and self.canvas.shapes:
-                print(f"Vehicle.json上書き保存開始: {self.current_vehicle_path}")
-                self.save_vehicle_to_current_path()
-                print("Vehicle.json上書き保存完了")
+                    print(f"   {i+1}. {shape.name} ({shape.category.value})")
             else:
-                if not self.current_vehicle_path:
-                    print("Vehicle.jsonパスが記録されていません")
-                if not self.canvas.shapes:
-                    print("保存する図形がありません")
+                print("⚠️ 保存・送信する図形がありません")
+                # 図形がない場合でもMONITORモードに遷移
+                print("図形なしでMONITORモードに切り替えます...")
+                self.switch_to_mode(AppMode.MONITOR)
+                return
             
-            # 2. MQTTで"vehicle"トピックに送信
-            if self.canvas.shapes:
-                print("Vehicle.jsonデータのMQTT送信開始...")
-                vehicle_data = self.generate_vehicle_json_data()
-                mqtt_success = self.send_vehicle_to_mqtt(vehicle_data)
-                if mqtt_success:
-                    print("MQTT vehicle送信完了")
+            # Step 1: vehicle.jsonを上書き保存（verification付き）
+            save_success = False
+            if self.current_vehicle_path:
+                print(f"📁 Step 1: Vehicle.json上書き保存開始")
+                print(f"   保存先: {self.current_vehicle_path}")
+                
+                save_success = self.save_vehicle_to_current_path()
+                
+                if save_success:
+                    print("✅ Step 1 完了: Vehicle.json上書き保存成功")
                 else:
-                    print("MQTT vehicle送信失敗（継続）")
+                    print("❌ Step 1 失敗: Vehicle.json上書き保存失敗")
+                    print("   ⚠️ 保存失敗でもMQTT送信とモード遷移を継続します")
             else:
-                print("送信する図形がありません")
+                print("⚠️ Step 1 スキップ: Vehicle.jsonパスが記録されていません")
             
-            # 3. MONITORモードに切り替え
-            print("MONITORモードに切り替え中...")
+            # Step 2: 保存成功確認後のverification（追加チェック）
+            if save_success and self.current_vehicle_path:
+                print(f"🔍 Step 1.5: 保存verification（追加チェック）")
+                try:
+                    import os
+                    import json
+                    import time
+                    
+                    # 少し待機してファイルシステムの反映を確認
+                    time.sleep(0.5)
+                    
+                    if os.path.exists(self.current_vehicle_path):
+                        file_size = os.path.getsize(self.current_vehicle_path)
+                        print(f"   ✅ ファイル存在確認: {file_size} bytes")
+                        
+                        # ファイル内容の簡単確認
+                        with open(self.current_vehicle_path, 'r', encoding='utf-8') as f:
+                            saved_data = json.load(f)
+                            shape_counts = {
+                                'icon': len(saved_data.get('icon', [])),
+                                'meter': len(saved_data.get('meter', [])),
+                                'ocr': len(saved_data.get('ocr', []))
+                            }
+                            print(f"   ✅ 保存内容確認: {shape_counts}")
+                    else:
+                        print(f"   ❌ ファイル存在確認失敗: {self.current_vehicle_path}")
+                        
+                except Exception as e:
+                    print(f"   ⚠️ 追加verification失敗: {e}")
+            
+            # Step 3: MQTT送信用データ生成・送信（処理順序最適化）
+            print(f"📡 Step 3: MQTT送信処理開始")
+            
+            if self.mqtt_service:
+                print("   🔗 MQTT service利用可能")
+                
+                # データ生成（保存と同じメソッドを使用してデータ整合性を確保）
+                print("   📄 Vehicle.jsonデータ生成中...")
+                vehicle_data = self.generate_vehicle_json_data()
+                print(f"   ✅ データ生成完了: {len(vehicle_data)} フィールド")
+                
+                # データ内容の詳細ログ
+                if vehicle_data:
+                    shape_counts = {
+                        'icon': len(vehicle_data.get('icon', [])),
+                        'meter': len(vehicle_data.get('meter', [])),
+                        'ocr': len(vehicle_data.get('ocr', []))
+                    }
+                    print(f"   📊 送信データ: name={vehicle_data.get('name', 'N/A')}, shapes={shape_counts}")
+                
+                # MQTT送信実行
+                print("   📡 MQTT 'vehicle'トピックに送信中...")
+                mqtt_success = self.send_vehicle_to_mqtt(vehicle_data)
+                
+                if mqtt_success:
+                    print("✅ Step 3 完了: MQTT vehicle送信成功")
+                else:
+                    print("❌ Step 3 失敗: MQTT vehicle送信失敗")
+                    print("   ⚠️ 送信失敗でもモード遷移を継続します")
+            else:
+                print("⚠️ Step 3 スキップ: MQTT service利用不可")
+            
+            # Step 4: MONITORモードに切り替え
+            print("🔄 Step 4: MONITORモードに切り替え中...")
             self.switch_to_mode(AppMode.MONITOR)
-            print("EDIT→MONITOR遷移完了")
+            print("✅ EDIT→MONITOR遷移完了")
+            
+            # 最終結果サマリー
+            print("=== EDIT→MONITOR遷移結果サマリー ===")
+            print(f"   📁 Vehicle.json保存: {'成功' if save_success else '失敗/スキップ'}")
+            print(f"   📡 MQTT送信: {'成功' if self.mqtt_service and mqtt_success else '失敗/スキップ'}")
+            print(f"   🔄 モード遷移: 成功")
             
         except Exception as e:
-            print(f"EDIT→MONITOR遷移エラー: {e}")
+            print(f"❌ EDIT→MONITOR遷移エラー: {e}")
+            print("   🚨 エラーでもMONITORモードに切り替えます")
             self.switch_to_mode(AppMode.MONITOR)  # エラーでもMONITORモードに切り替え
     
     def setup_monitor_mode(self):
@@ -4976,7 +5048,7 @@ class VehicleMonitorEditor(QMainWindow):
             return False
     
     def get_full_image_from_rest_api(self, config_data) -> Optional[bytes]:
-        """CONFIG→EDIT遷移用: RestAPIでfull_imageを取得（新撮影）"""
+        """CONFIG→EDIT遷移用: RestAPIでfull_imageを取得（新撮影・リトライ機構付き）"""
         try:
             print("Step 11: RestAPIでfull_imageを取得中...")
             
@@ -4997,33 +5069,84 @@ class VehicleMonitorEditor(QMainWindow):
                 print("ERROR: RestAPI host情報がありません")
                 return None
             
-            # full_image取得URL構築（新撮影）
-            image_url = f"http://{rest_api_host}:{rest_api_port}/full_image"
-            print(f"RestAPI取得先: {image_url}")
-            
-            # RestAPIからfull_imageを取得（新撮影）
+            # リトライ機構付きの画像取得
+            import time
             import requests
+            import hashlib
             
-            try:
-                print(f"RestAPI full_image取得開始: {image_url}")
-                response = requests.get(image_url, timeout=30)  # 新撮影なので30秒タイムアウト
-                response.raise_for_status()
-                
-                print(f"✅ RestAPI full_image取得成功: {len(response.content)} bytes")
-                return response.content
-                
-            except requests.exceptions.Timeout:
-                print("❌ RestAPI full_image取得タイムアウト（30秒）")
-                return None
-            except requests.exceptions.ConnectionError:
-                print(f"❌ RestAPI接続エラー: {rest_api_host}:{rest_api_port} に接続できません")
-                return None
-            except requests.exceptions.HTTPError as e:
-                print(f"❌ RestAPI HTTPエラー: {e.response.status_code} - {e}")
-                return None
-            except Exception as e:
-                print(f"❌ RestAPI予期しないエラー: {e}")
-                return None
+            max_retries = 3
+            previous_hash = None
+            
+            for attempt in range(max_retries):
+                try:
+                    print(f"RestAPI full_image取得試行 {attempt + 1}/{max_retries}")
+                    
+                    # full_image取得URL構築（新撮影）- キャッシュバスティング対応
+                    timestamp = int(time.time() * 1000)  # ミリ秒タイムスタンプ
+                    image_url = f"http://{rest_api_host}:{rest_api_port}/full_image?timestamp={timestamp}"
+                    print(f"RestAPI取得先（キャッシュバスティング付き）: {image_url}")
+                    
+                    # キャッシュ回避ヘッダー設定
+                    headers = {
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
+                    }
+                    
+                    print(f"RestAPI full_image取得開始（キャッシュ回避）: {image_url}")
+                    response = requests.get(image_url, headers=headers, timeout=30)  # 新撮影なので30秒タイムアウト
+                    response.raise_for_status()
+                    
+                    # 取得した画像のハッシュを計算
+                    image_hash = hashlib.md5(response.content).hexdigest()
+                    print(f"取得画像ハッシュ: {image_hash}")
+                    
+                    # 初回または前回と異なるハッシュの場合は成功
+                    if previous_hash is None or image_hash != previous_hash:
+                        print(f"✅ RestAPI full_image取得成功: {len(response.content)} bytes (試行{attempt + 1})")
+                        return response.content
+                    else:
+                        print(f"⚠️ 同一画像検出（キャッシュされた可能性）: {image_hash}")
+                        if attempt < max_retries - 1:
+                            print(f"2秒待機後に再試行します...")
+                            time.sleep(2)  # 2秒待機してから再試行
+                            previous_hash = image_hash
+                            continue
+                        else:
+                            print("最大試行回数に達しました。現在の画像を返します。")
+                            return response.content
+                    
+                except requests.exceptions.Timeout:
+                    print(f"❌ RestAPI full_image取得タイムアウト（30秒）- 試行{attempt + 1}")
+                    if attempt < max_retries - 1:
+                        print("5秒待機後に再試行します...")
+                        time.sleep(5)
+                        continue
+                    return None
+                except requests.exceptions.ConnectionError:
+                    print(f"❌ RestAPI接続エラー: {rest_api_host}:{rest_api_port} - 試行{attempt + 1}")
+                    if attempt < max_retries - 1:
+                        print("3秒待機後に再試行します...")
+                        time.sleep(3)
+                        continue
+                    return None
+                except requests.exceptions.HTTPError as e:
+                    print(f"❌ RestAPI HTTPエラー: {e.response.status_code} - {e} - 試行{attempt + 1}")
+                    if attempt < max_retries - 1:
+                        print("3秒待機後に再試行します...")
+                        time.sleep(3)
+                        continue
+                    return None
+                except Exception as e:
+                    print(f"❌ RestAPI予期しないエラー: {e} - 試行{attempt + 1}")
+                    if attempt < max_retries - 1:
+                        print("3秒待機後に再試行します...")
+                        time.sleep(3)
+                        continue
+                    return None
+            
+            print("全ての試行が失敗しました")
+            return None
             
         except Exception as e:
             print(f"RestAPI取得エラー: {e}")
@@ -5622,7 +5745,7 @@ class VehicleMonitorEditor(QMainWindow):
             self.statusBar().showMessage(f"Vehicle JSONを保存しました: {file_path}")
     
     def save_vehicle_to_current_path(self):
-        """現在のvehicle.jsonパスに上書き保存"""
+        """現在のvehicle.jsonパスに上書き保存（verification付き）"""
         if not self.current_vehicle_path:
             print("ERROR: vehicle.jsonパスが記録されていません")
             return False
@@ -5631,18 +5754,88 @@ class VehicleMonitorEditor(QMainWindow):
             print("ERROR: 保存する図形がありません")
             return False
         
-        try:
-            vehicle_data = self.generate_vehicle_json_data()
-            
-            with open(self.current_vehicle_path, 'w', encoding='utf-8') as f:
-                json.dump(vehicle_data, f, indent=2, ensure_ascii=False)
-            
-            print(f"Vehicle.json上書き保存成功: {self.current_vehicle_path}")
-            return True
-            
-        except Exception as e:
-            print(f"Vehicle.json上書き保存エラー: {e}")
-            return False
+        import os
+        import json
+        
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"Vehicle.json保存試行 {attempt + 1}/{max_retries}: {self.current_vehicle_path}")
+                
+                # 保存するデータを生成
+                vehicle_data = self.generate_vehicle_json_data()
+                print(f"保存データ生成完了: {len(vehicle_data)} フィールド")
+                
+                # JSONデータをバックアップとして保持
+                json_string = json.dumps(vehicle_data, indent=2, ensure_ascii=False)
+                original_size = len(json_string)
+                print(f"JSON文字列サイズ: {original_size} characters")
+                
+                # ファイルに書き込み
+                with open(self.current_vehicle_path, 'w', encoding='utf-8') as f:
+                    f.write(json_string)
+                    f.flush()  # バッファをフラッシュ
+                    os.fsync(f.fileno())  # OSレベルで強制書き込み
+                
+                print(f"ファイル書き込み完了: {self.current_vehicle_path}")
+                
+                # 保存verification: ファイル存在確認
+                if not os.path.exists(self.current_vehicle_path):
+                    raise Exception("保存ファイルが存在しません")
+                
+                # 保存verification: ファイルサイズ確認
+                file_size = os.path.getsize(self.current_vehicle_path)
+                print(f"保存ファイルサイズ: {file_size} bytes")
+                
+                if file_size == 0:
+                    raise Exception("保存ファイルが空です")
+                
+                # 保存verification: 内容確認（読み戻しテスト）
+                try:
+                    with open(self.current_vehicle_path, 'r', encoding='utf-8') as f:
+                        saved_content = f.read()
+                        saved_data = json.loads(saved_content)
+                    
+                    # 主要フィールドの存在確認
+                    required_fields = ['name', 'path', 'threshold']
+                    for field in required_fields:
+                        if field not in saved_data:
+                            raise Exception(f"必須フィールド '{field}' が保存されていません")
+                    
+                    # 図形データの存在確認
+                    shape_fields = ['icon', 'meter', 'ocr']
+                    total_shapes = sum(len(saved_data.get(field, [])) for field in shape_fields)
+                    canvas_shapes = len(self.canvas.shapes)
+                    
+                    print(f"保存された図形数: {total_shapes}, キャンバス図形数: {canvas_shapes}")
+                    
+                    if total_shapes != canvas_shapes:
+                        print(f"⚠️ 図形数が一致しません（保存: {total_shapes}, キャンバス: {canvas_shapes}）")
+                        # 図形数不一致は警告のみ（barデータ等があるため）
+                    
+                    print(f"✅ Vehicle.json上書き保存 & verification成功: {self.current_vehicle_path}")
+                    print(f"   - ファイルサイズ: {file_size} bytes")
+                    print(f"   - 図形データ: icon={len(saved_data.get('icon', []))}, meter={len(saved_data.get('meter', []))}, ocr={len(saved_data.get('ocr', []))}")
+                    return True
+                    
+                except json.JSONDecodeError as e:
+                    raise Exception(f"保存されたJSONが不正です: {e}")
+                except Exception as e:
+                    raise Exception(f"内容verification失敗: {e}")
+                
+            except Exception as e:
+                print(f"❌ Vehicle.json保存失敗 (試行{attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    print("2秒待機後に再試行します...")
+                    import time
+                    time.sleep(2)
+                    continue
+                else:
+                    print(f"❌ Vehicle.json保存が最大試行回数で失敗しました: {self.current_vehicle_path}")
+                    return False
+        
+        return False
     
     def generate_vehicle_json_data(self) -> dict:
         """現在の図形からvehicle.json形式データを生成（元データ完全保持）"""
