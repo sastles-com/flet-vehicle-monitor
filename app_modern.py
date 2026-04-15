@@ -6,6 +6,7 @@ Vehicle Monitor Application - Modern Framework Version
 
 import sys
 from typing import Optional
+import os
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QSizePolicy,
                                QGraphicsView, QGraphicsScene, QPushButton, QHBoxLayout, QGroupBox,
@@ -31,6 +32,23 @@ from components.config.config_view import ConfigView
 
 # サービス
 from services.mqtt_service import MQTTService
+
+
+def _get_default_desktop_dir() -> str:
+    """Resolve Desktop base dir from env/Windows, fallback to ~/Desktop."""
+    env_dir = os.environ.get("DEFAULT_DIR")
+    if env_dir:
+        return env_dir
+    # Try Windows Known Folder
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        CSIDL_DESKTOPDIRECTORY = 0x10
+        if ctypes.windll.shell32.SHGetFolderPathW(None, CSIDL_DESKTOPDIRECTORY, None, 0, buf) == 0:
+            return buf.value
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser("~"), "Desktop")
 
 
 class ConfigModernSidebar(ModernSidebar):
@@ -149,7 +167,7 @@ class ConfigModernSidebar(ModernSidebar):
         import os
         
         try:
-            default_vehicle_folder = r"C:\Users\table0\Desktop\Vehicles"
+            default_vehicle_folder = os.path.join(_get_default_desktop_dir(), "Vehicles")
             
             print(f"CONFIG起動時: vehicle.json選択ダイアログを自動表示します")
             print(f"Opening vehicle file dialog with default folder: {default_vehicle_folder}")
@@ -211,7 +229,7 @@ class EditModernSidebar(ModernSidebar):
         
         # ファイル選択用
         self.current_vehicle_file_path = None
-        self.default_vehicle_folder = r"C:\Users\table0\Desktop\Vehicles"
+        self.default_vehicle_folder = os.path.join(_get_default_desktop_dir(), "Vehicles")
         
         # 設定データ保存
         self.config_data = None
@@ -3924,8 +3942,8 @@ class VehicleMonitorModernApplication(QMainWindow):
             import os
             from PySide6.QtGui import QPixmap
             
-            # ローカルファイルパス
-            file_path = r"C:\Users\table0\vm\image_editor\data\full_image.jpg"
+            # ローカルファイルパス（リポジトリ相対）
+            file_path = os.path.join(os.getcwd(), "data", "full_image.jpg")
             print(f"CONFIG→EDIT ローカル: 画像ファイル読み込み開始 - {file_path}")
             
             # ファイル存在確認

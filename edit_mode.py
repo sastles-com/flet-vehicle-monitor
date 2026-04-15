@@ -6,6 +6,38 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import requests
 from io import BytesIO
+
+# --- Default directory resolution (Desktop) ---
+def _get_windows_desktop_dir_knownfolder() -> str:
+    """Resolve Desktop path on Windows using shell API, fallback to %USERPROFILE%/Desktop."""
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        CSIDL_DESKTOPDIRECTORY = 0x10
+        # SHGetFolderPathW returns S_OK(0) on success
+        if ctypes.windll.shell32.SHGetFolderPathW(None, CSIDL_DESKTOPDIRECTORY, None, 0, buf) == 0:
+            return buf.value
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
+def _parse_default_dir_from_cli_env() -> str:
+    """Priority: CLI --default-dir > env DEFAULT_DIR > KnownFolder/Desktop."""
+    try:
+        if "--default-dir" in sys.argv:
+            i = sys.argv.index("--default-dir")
+            if i + 1 < len(sys.argv):
+                return sys.argv[i + 1]
+    except Exception:
+        pass
+    env_dir = os.environ.get("DEFAULT_DIR")
+    if env_dir:
+        return env_dir
+    return _get_windows_desktop_dir_knownfolder()
+
+
+DEFAULT_DESKTOP_DIR = _parse_default_dir_from_cli_env()
 from PySide6.QtWidgets import (QApplication, QMainWindow, QGraphicsView, 
                                QGraphicsScene, QGraphicsItem, QGraphicsRectItem,
                                QGraphicsEllipseItem, QVBoxLayout, QHBoxLayout,
@@ -49,8 +81,8 @@ class FileDataLoader(IDataLoader):
     """テスト用：ファイルからデータ読み込み"""
     
     def load_config(self) -> dict:
-        """C:/Users/table0/Desktop/config/config-40.jsonから読み込み"""
-        config_path = "C:/Users/table0/Desktop/config/config-40.json"
+        """デフォルトDesktop配下のconfig/config-40.jsonから読み込み"""
+        config_path = os.path.join(DEFAULT_DESKTOP_DIR, "config", "config-40.json")
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -2539,7 +2571,8 @@ class ConfigMainView(QWidget):
                 background-color: #0d47a1;
             }
         """)
-        self.load_config_btn.clicked.connect(self.load_config_file)
+        # Use lambda to drop the 'checked' bool from clicked(bool)
+        self.load_config_btn.clicked.connect(lambda: self.load_config_file())
         layout.addWidget(self.load_config_btn)
         
         # config.json編集フォーム（app.pyのConfigSidebarを参考）
@@ -2824,10 +2857,9 @@ class ConfigMainView(QWidget):
     def load_config_file(self):
         """config.jsonファイル読み込み（デフォルト：デスクトップ/config）"""
         try:
-            default_folder = r"C:\Users\table0\Desktop\config"
-            
+            default_folder = os.path.join(DEFAULT_DESKTOP_DIR, "config")
+
             # デフォルトフォルダが存在しない場合は作成
-            import os
             if not os.path.exists(default_folder):
                 try:
                     os.makedirs(default_folder, exist_ok=True)
@@ -4710,7 +4742,7 @@ class VehicleMonitorEditor(QMainWindow):
                 self.config_view._skip_restapi_test = True
             self._skip_restapi_test = True
             
-            self.ultra_immediate_capture_and_edit_transition()
+            self.transition_to_edit_mode()
         elif self.current_mode == AppMode.EDIT:
             # EDIT→MONITOR遷移時にデータ保存・送信処理
             self.transition_to_monitor_mode()
@@ -4785,14 +4817,32 @@ class VehicleMonitorEditor(QMainWindow):
         
         self.switch_to_mode(prev_mode)
     
-    def ultra_immediate_capture_and_edit_transition(self):
-        """超シンプル撮影：ボタン押下→image.jpg保存のみに特化"""
+    def transition_to_edit_mode(self):
+        """CONFIG→EDIT遷移時のconfig.json送信・画像取得処理"""
         import time
         import requests
+        import json
         
-        # ボタン押下瞬間
+        print("=== CONFIG→EDIT遷移が開始されました ===")
         button_time = time.time()
         print(f"⚡ ボタン押下: {button_time}")
+        
+        try:
+            # 1. config.jsonをMQTT configトピックに送信
+            print("📤 config.jsonをMQTT送信中...")
+            config_data = None
+            if hasattr(self.config_view, 'get_config_data'):
+                config_data = self.config_view.get_config_data()
+                if config_data:
+                    self._publish_config_to_mqtt(config_data)
+                    print("✅ config.json MQTT送信完了")
+                else:
+                    print("⚠️ config.jsonデータ取得失敗")
+            else:
+                print("⚠️ config_viewが利用できません")
+        
+        except Exception as mqtt_error:
+            print(f"⚠️ config.json MQTT送信エラー: {mqtt_error}")
         
         try:
             # 最速URL取得：事前準備済み優先、なければconfig.jsonから取得
@@ -5181,6 +5231,45 @@ class VehicleMonitorEditor(QMainWindow):
             print(f"CONFIG→EDIT遷移エラー: {e}")
             self.switch_to_mode(AppMode.EDIT)  # エラーでもEDITモードに切り替え
     
+    def _publish_config_to_mqtt(self, config_data: dict):
+        """MQTT 'config' トピックにconfig.jsonを送信"""
+        try:
+            print(f"=== _publish_config_to_mqtt called ===")
+            print(f"MQTT service available: {self.mqtt_service is not None}")
+            
+            if not self.mqtt_service or not hasattr(self.mqtt_service, 'is_connected'):
+                print("MQTTサービスが利用できません")
+                return False
+            
+            print(f"MQTT connected: {self.mqtt_service.is_connected()}")
+            if not self.mqtt_service.is_connected():
+                print("MQTT接続が確立されていません")
+                return False
+            
+            # JSON文字列に変換
+            import json
+            config_json = json.dumps(config_data, ensure_ascii=False, separators=(',', ':'))
+            print(f"Config JSON prepared: {len(config_json)} chars")
+            print(f"Config JSON preview: {config_json[:200]}...")
+            
+            # 'config' トピックに送信
+            print("Calling mqtt_service.publish...")
+            success = self.mqtt_service.publish("config", config_json, qos=1, retain=True)
+            
+            print(f"Publish result: {success}")
+            if success:
+                print("MQTT 'config' トピックに設定を送信しました")
+            else:
+                print("MQTT設定送信に失敗しました")
+                
+            return success
+            
+        except Exception as e:
+            print(f"MQTT設定送信エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
     def transition_to_monitor_mode(self):
         """EDIT→MONITOR遷移時のデータ保存・送信処理（処理順序最適化・詳細ログ強化）"""
         try:
@@ -5259,21 +5348,31 @@ class VehicleMonitorEditor(QMainWindow):
                 
                 # データ生成（保存と同じメソッドを使用してデータ整合性を確保）
                 print("   📄 Vehicle.jsonデータ生成中...")
-                vehicle_data = self.generate_vehicle_json_data()
-                print(f"   ✅ データ生成完了: {len(vehicle_data)} フィールド")
+                vehicle_json = self.generate_vehicle_json_data()
+                print(f"   ✅ データ生成完了: {len(vehicle_json)} フィールド")
+                
+                # MONITOR表示で参照するself.vehicle_data（dataclass）を最新JSONから構築して更新
+                try:
+                    updated_vehicle = self._build_vehicle_data_from_json(vehicle_json)
+                    # 元JSONの完全コピーを添付（他箇所で参照される場合に備える）
+                    setattr(updated_vehicle, '_original_json_data', vehicle_json.copy())
+                    self.vehicle_data = updated_vehicle
+                    print("   ✅ self.vehicle_data を最新状態に更新（MONITOR描画に反映）")
+                except Exception as e:
+                    print(f"   ⚠️ self.vehicle_data 更新失敗: {e}")
                 
                 # データ内容の詳細ログ
-                if vehicle_data:
+                if vehicle_json:
                     shape_counts = {
-                        'icon': len(vehicle_data.get('icon', [])),
-                        'meter': len(vehicle_data.get('meter', [])),
-                        'ocr': len(vehicle_data.get('ocr', []))
+                        'icon': len(vehicle_json.get('icon', [])),
+                        'meter': len(vehicle_json.get('meter', [])),
+                        'ocr': len(vehicle_json.get('ocr', []))
                     }
-                    print(f"   📊 送信データ: name={vehicle_data.get('name', 'N/A')}, shapes={shape_counts}")
+                    print(f"   📊 送信データ: name={vehicle_json.get('name', 'N/A')}, shapes={shape_counts}")
                 
                 # MQTT送信実行
                 print("   📡 MQTT 'vehicle'トピックに送信中...")
-                mqtt_success = self.send_vehicle_to_mqtt(vehicle_data)
+                mqtt_success = self.send_vehicle_to_mqtt(vehicle_json)
                 
                 if mqtt_success:
                     print("✅ Step 3 完了: MQTT vehicle送信成功")
@@ -5282,6 +5381,16 @@ class VehicleMonitorEditor(QMainWindow):
                     print("   ⚠️ 送信失敗でもモード遷移を継続します")
             else:
                 print("⚠️ Step 3 スキップ: MQTT service利用不可")
+                # MQTT未使用でもMONITOR表示用データは最新に更新しておく
+                try:
+                    print("   📄 Vehicle.jsonデータ生成中（MQTT未使用だが表示更新のため）...")
+                    vehicle_json = self.generate_vehicle_json_data()
+                    updated_vehicle = self._build_vehicle_data_from_json(vehicle_json)
+                    setattr(updated_vehicle, '_original_json_data', vehicle_json.copy())
+                    self.vehicle_data = updated_vehicle
+                    print("   ✅ self.vehicle_data を最新状態に更新（MQTT未使用時）")
+                except Exception as e:
+                    print(f"   ⚠️ self.vehicle_data 更新失敗（MQTT未使用時）: {e}")
             
             # Step 4: MONITORモードに切り替え
             print("🔄 Step 4: MONITORモードに切り替え中...")
@@ -5298,6 +5407,102 @@ class VehicleMonitorEditor(QMainWindow):
             print(f"❌ EDIT→MONITOR遷移エラー: {e}")
             print("   🚨 エラーでもMONITORモードに切り替えます")
             self.switch_to_mode(AppMode.MONITOR)  # エラーでもMONITORモードに切り替え
+
+    def _build_vehicle_data_from_json(self, data: dict) -> VehicleData:
+        """JSON(dict)からVehicleData(dataclass)を再構築（編集結果を反映）。"""
+        # Icon
+        icons: List[IconData] = []
+        for icon_data in (data.get("icon") or []):
+            tl = icon_data.get("top_left", {})
+            br = icon_data.get("bottom_right", {})
+            icons.append(
+                IconData(
+                    name=icon_data.get("name", ""),
+                    path=icon_data.get("path", ""),
+                    type=icon_data.get("type", ""),
+                    shape=icon_data.get("shape", "box"),
+                    top_left=Position(float(tl.get("x", 0)), float(tl.get("y", 0))),
+                    bottom_right=Position(float(br.get("x", 0)), float(br.get("y", 0)))
+                )
+            )
+
+        # Meter
+        meters: List[MeterData] = []
+        for meter_data in (data.get("meter") or []):
+            center = meter_data.get("center", {})
+            circumference_points: List[CircumferencePoint] = []
+            for cp in (meter_data.get("circumference") or []):
+                pos = cp.get("position", {})
+                circumference_points.append(
+                    CircumferencePoint(
+                        position=Position(float(pos.get("x", 0)), float(pos.get("y", 0))),
+                        value=float(cp.get("value", 0))
+                    )
+                )
+            meters.append(
+                MeterData(
+                    name=meter_data.get("name", ""),
+                    path=meter_data.get("path", ""),
+                    type=meter_data.get("type", ""),
+                    shape=meter_data.get("shape", "circle"),
+                    center=Position(float(center.get("x", 0)), float(center.get("y", 0))),
+                    radius=float(meter_data.get("radius", 0)),
+                    ratio=float(meter_data.get("ratio", 1.0)),
+                    circumference=circumference_points
+                )
+            )
+
+        # OCR
+        ocrs: List[OCRData] = []
+        for ocr_data in (data.get("ocr") or []):
+            tl = ocr_data.get("top_left", {})
+            br = ocr_data.get("bottom_right", {})
+            ocrs.append(
+                OCRData(
+                    name=ocr_data.get("name", ""),
+                    type=ocr_data.get("type", ""),
+                    shape=ocr_data.get("shape", "box"),
+                    top_left=Position(float(tl.get("x", 0)), float(tl.get("y", 0))),
+                    bottom_right=Position(float(br.get("x", 0)), float(br.get("y", 0)))
+                )
+            )
+
+        # Bar（dataclass整合のため作成。MONITOR描画は現状未使用）
+        bars: List[BarData] = []
+        for bar_data in (data.get("bar") or []):
+            circumference_points: List[CircumferencePoint] = []
+            for cp in (bar_data.get("circumference") or []):
+                pos = cp.get("position", {})
+                circumference_points.append(
+                    CircumferencePoint(
+                        position=Position(float(pos.get("x", 0)), float(pos.get("y", 0))),
+                        value=float(cp.get("value", 0))
+                    )
+                )
+            bars.append(
+                BarData(
+                    name=bar_data.get("name", ""),
+                    type=bar_data.get("type", ""),
+                    shape=bar_data.get("shape", "bar"),
+                    orientation=bar_data.get("orientation", "horizontal"),
+                    min_value=float(bar_data.get("min_value", 0.0)),
+                    max_value=float(bar_data.get("max_value", 1.0)),
+                    circumference=circumference_points,
+                    extra_fields={k: v for k, v in bar_data.items() if k not in {"name","type","shape","orientation","min_value","max_value","circumference"}}
+                )
+            )
+
+        return VehicleData(
+            name=data.get("name", "VEHICLE"),
+            path=data.get("path", "/templates"),
+            threshold=float(data.get("threshold", 0.8)),
+            gray=bool(data.get("gray", True)),
+            offset=int(data.get("offset", 50)),
+            icon=icons,
+            meter=meters,
+            ocr=ocrs,
+            bar=bars
+        )
     
     def setup_monitor_mode(self):
         """MONITORモード初期化処理"""
@@ -5818,7 +6023,7 @@ class VehicleMonitorEditor(QMainWindow):
     def load_vehicle(self):
         """vehicle.jsonファイルを読み込む"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Vehicle JSONを開く", "C:/Users/table0/Desktop/Vehicles/",
+            self, "Vehicle JSONを開く", os.path.join(DEFAULT_DESKTOP_DIR, "Vehicles"),
             "JSON Files (*.json)"
         )
         
@@ -6509,10 +6714,9 @@ class VehicleMonitorEditor(QMainWindow):
     def load_vehicle_file_dialog(self):
         """Vehicle.jsonファイルダイアログを表示"""
         try:
-            default_folder = r"C:\Users\table0\Desktop\Vehicles"
-            
+            default_folder = os.path.join(DEFAULT_DESKTOP_DIR, "Vehicles")
+
             # デフォルトフォルダが存在しない場合は作成
-            import os
             if not os.path.exists(default_folder):
                 try:
                     os.makedirs(default_folder, exist_ok=True)
