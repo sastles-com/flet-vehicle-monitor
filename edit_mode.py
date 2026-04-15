@@ -3471,7 +3471,7 @@ class MonitorMainView(QWidget):
             # 画像受信シグナルに接続
             try:
                 mqtt_service.image_received.connect(self.on_image_received)
-                print("MONITOR: Connected to MQTT image_received signal")
+                self.debug_print("MONITOR: Connected to MQTT image_received signal")
             except Exception as e:
                 print(f"MONITOR: Failed to connect MQTT signal: {e}")
     
@@ -3481,19 +3481,19 @@ class MonitorMainView(QWidget):
     
     def on_start_monitoring_clicked(self):
         """監視開始ボタンクリック時の処理"""
-        print("MONITOR: Start monitoring button clicked")
+        self.debug_print("MONITOR: Start monitoring button clicked")
         self.start_monitoring()
         self.update_button_states()
     
     def on_stop_monitoring_clicked(self):
         """監視停止ボタンクリック時の処理"""
-        print("MONITOR: Stop monitoring button clicked")
+        self.debug_print("MONITOR: Stop monitoring button clicked")
         self.stop_monitoring()
         self.update_button_states()
         
     def start_monitoring(self):
         """監視開始"""
-        print("MONITOR: Starting monitoring process...")
+        self.debug_print("MONITOR: Starting monitoring process...")
         
         self.is_monitoring = True
         self.is_monitoring_active = True  # 監視状態フラグを更新
@@ -3541,7 +3541,7 @@ class MonitorMainView(QWidget):
         # ヘッダーボタンを更新
         self.update_navigation_buttons()
         
-        print("MONITOR: Monitoring started - waiting for MQTT images...")
+        self.debug_print("MONITOR: Monitoring started - waiting for MQTT images...")
     
     def stop_monitoring(self):
         """監視停止"""
@@ -3578,35 +3578,35 @@ class MonitorMainView(QWidget):
         # ヘッダーボタンを更新
         self.update_navigation_buttons()
         
-        print("MONITOR: Monitoring stopped")
+        self.debug_print("MONITOR: Monitoring stopped")
     
     @Slot(str)
     def on_image_received(self, base64_image: str):
         """MQTT画像データ受信時の処理（CONFIGと同様だが、パーツ検出処理も追加）（メインスレッドで実行）"""
         try:
             import threading
-            print(f"MONITOR: *** on_image_received called in thread: {threading.current_thread().name} ***")
-            print(f"MONITOR: *** Received base64 image data, length: {len(base64_image)} characters ***")
+            self.debug_print(f"MONITOR: *** on_image_received called in thread: {threading.current_thread().name} ***")
+            self.debug_print(f"MONITOR: *** Received base64 image data, length: {len(base64_image)} characters ***")
             
             # base64データをデコード
-            print("MONITOR: *** Attempting base64 decode ***")
+            self.debug_print("MONITOR: *** Attempting base64 decode ***")
             image_data = base64.b64decode(base64_image)
-            print(f"MONITOR: *** Base64 decode successful, binary size: {len(image_data)} bytes ***")
+            self.debug_print(f"MONITOR: *** Base64 decode successful, binary size: {len(image_data)} bytes ***")
             
             # QPixmapに変換
-            print("MONITOR: *** Creating QPixmap and attempting loadFromData ***")
+            self.debug_print("MONITOR: *** Creating QPixmap and attempting loadFromData ***")
             pixmap = QPixmap()
             
             # PNG形式のヘッダーを確認
             if image_data.startswith(b'\x89PNG'):
-                print("MONITOR: *** Image data is PNG format ***")
+                self.debug_print("MONITOR: *** Image data is PNG format ***")
             elif image_data.startswith(b'\xff\xd8\xff'):
-                print("MONITOR: *** Image data is JPEG format ***")
+                self.debug_print("MONITOR: *** Image data is JPEG format ***")
             else:
-                print(f"MONITOR: *** Unknown image format, starts with: {image_data[:10].hex()} ***")
+                self.debug_print(f"MONITOR: *** Unknown image format, starts with: {image_data[:10].hex()} ***")
             
             if pixmap.loadFromData(image_data):
-                print(f"MONITOR: *** QPixmap creation successful, size: {pixmap.width()}x{pixmap.height()} ***")
+                self.debug_print(f"MONITOR: *** QPixmap creation successful, size: {pixmap.width()}x{pixmap.height()} ***")
                 
                 # FPS計算
                 current_time = time.time()
@@ -3798,7 +3798,7 @@ class MonitorMainView(QWidget):
             
             # 解像度情報更新
             self.update_resolution_display(pixmap)
-            print("MONITOR: Image label updated successfully")
+            self.debug_print("MONITOR: Image label updated successfully")
             
         except Exception as e:
             print(f"MONITOR: Error displaying image: {e}")
@@ -3939,6 +3939,9 @@ class VehicleMonitorEditor(QMainWindow):
         self.is_initial_config_transition = True  # 初回CONFIG遷移時のみファイルダイアログ表示
         self.is_initial_edit_transition = True    # 初回EDIT遷移時のみファイルダイアログ表示
         
+        # DEBUG制御フラグ（デフォルト：False）
+        self.debug_enabled = False
+        
         # 監視状態管理フラグ（ヘッダーボタンのトグル制御用）
         self.is_monitoring_active = False
         
@@ -3960,6 +3963,28 @@ class VehicleMonitorEditor(QMainWindow):
         
         # 初期ナビゲーションボタン設定
         self.update_navigation_buttons()
+    
+    def debug_print(self, message: str):
+        """DEBUG有効時のみメッセージを出力"""
+        if self.debug_enabled:
+            print(message)
+    
+    def toggle_debug(self):
+        """DEBUGモードのON/OFF切り替え"""
+        self.debug_enabled = not self.debug_enabled
+        status = "ON" if self.debug_enabled else "OFF"
+        print(f"🔧 DEBUG MODE: {status}")
+        return self.debug_enabled
+    
+    def on_debug_toggle(self, checked):
+        """DEBUGボタンクリック時の処理"""
+        self.debug_enabled = checked
+        status = "ON" if checked else "OFF"
+        print(f"🔧 DEBUG MODE: {status}")
+        
+        # ボタンのテキストを更新
+        if hasattr(self, 'debug_btn'):
+            self.debug_btn.setText(f"🔧 DEBUG {'ON' if checked else 'OFF'}")
         
         # UI初期化完了後に最大化を実行（タイミング問題修正）
         QTimer.singleShot(100, self.showMaximized)
@@ -4354,6 +4379,40 @@ class VehicleMonitorEditor(QMainWindow):
         self.next_btn.clicked.connect(self.next_mode)
         right_layout.addWidget(self.next_btn)
         
+        # DEBUGトグルボタン
+        self.debug_btn = QPushButton("🔧 DEBUG")
+        self.debug_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #7f8c8d;
+                color: white;
+                border: 2px solid #95a5a6;
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: bold;
+                min-width: 70px;
+                max-width: 70px;
+                min-height: 35px;
+                max-height: 35px;
+            }
+            QPushButton:hover {
+                background-color: #95a5a6;
+                border-color: #bdc3c7;
+            }
+            QPushButton:pressed {
+                background-color: #bdc3c7;
+            }
+            QPushButton:checked {
+                background-color: #f39c12;
+                border-color: #e67e22;
+                color: #2c3e50;
+            }
+        """)
+        self.debug_btn.setCheckable(True)
+        self.debug_btn.setChecked(self.debug_enabled)
+        self.debug_btn.clicked.connect(self.on_debug_toggle)
+        right_layout.addWidget(self.debug_btn)
+        
         header_layout.addWidget(right_section, 2)
         main_layout.addWidget(header_widget)
     
@@ -4564,7 +4623,7 @@ class VehicleMonitorEditor(QMainWindow):
     def start_monitoring(self):
         """監視開始処理（STARTボタンの機能）"""
         try:
-            print("MONITOR: Starting monitoring process...")
+            self.debug_print("MONITOR: Starting monitoring process...")
             
             # MONITORビューにMQTTサービスとvehicle.jsonデータを設定
             if hasattr(self.config_view, 'mqtt_service'):
