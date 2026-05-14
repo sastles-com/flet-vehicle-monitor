@@ -38,6 +38,8 @@ def _parse_default_dir_from_cli_env() -> str:
 
 
 DEFAULT_DESKTOP_DIR = _parse_default_dir_from_cli_env()
+# ファイルダイアログのデフォルト起点は常にDesktop
+DIALOG_DESKTOP_DIR = _get_windows_desktop_dir_knownfolder()
 from PySide6.QtWidgets import (QApplication, QMainWindow, QGraphicsView, 
                                QGraphicsScene, QGraphicsItem, QGraphicsRectItem,
                                QGraphicsEllipseItem, QVBoxLayout, QHBoxLayout,
@@ -192,6 +194,8 @@ class MeterData:
     radius: float
     ratio: float
     circumference: List[CircumferencePoint]
+    orientation: Optional[str] = None   # barのみ存在（bar識別マーカー）
+    bar_rect: Optional[dict] = None     # barのみ存在（実矩形座標）
 
 
 @dataclass
@@ -2857,7 +2861,7 @@ class ConfigMainView(QWidget):
     def load_config_file(self):
         """config.jsonファイル読み込み（デフォルト：デスクトップ/config）"""
         try:
-            default_folder = os.path.join(DEFAULT_DESKTOP_DIR, "config")
+            default_folder = os.path.join(DIALOG_DESKTOP_DIR, "config")
 
             # デフォルトフォルダが存在しない場合は作成
             if not os.path.exists(default_folder):
@@ -4717,13 +4721,13 @@ class VehicleMonitorEditor(QMainWindow):
             
             # 初回CONFIG遷移時のみconfig.jsonファイルダイアログを表示
             if self.is_initial_config_transition:
-                print("初回CONFIG遷移: config.jsonファイルダイアログを表示予定")
-                # 既存の起動時ファイルダイアログ処理を維持
+                print("初回CONFIG遷移: config.jsonファイルダイアログを表示")
+                self.is_initial_config_transition = False
+                QTimer.singleShot(500, self.show_startup_config_dialog)
             else:
                 print("CONFIG戻り遷移: 既存config.jsonデータを保持")
             
             # CONFIGモード時に撮影準備を実行（最速化のため）
-            from PySide6.QtCore import QTimer
             QTimer.singleShot(500, self.prepare_capture_data)  # 500ms後に事前準備実行
         elif mode == AppMode.EDIT:
             self.setup_edit_mode()
@@ -5507,7 +5511,9 @@ class VehicleMonitorEditor(QMainWindow):
                     center=Position(float(center.get("x", 0)), float(center.get("y", 0))),
                     radius=float(meter_data.get("radius", 0)),
                     ratio=float(meter_data.get("ratio", 1.0)),
-                    circumference=circumference_points
+                    circumference=circumference_points,
+                    orientation=meter_data.get("orientation"),
+                    bar_rect=meter_data.get("bar_rect"),
                 )
             )
 
@@ -6082,7 +6088,7 @@ class VehicleMonitorEditor(QMainWindow):
     def load_vehicle(self):
         """vehicle.jsonファイルを読み込む"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Vehicle JSONを開く", os.path.join(DEFAULT_DESKTOP_DIR, "Vehicles"),
+            self, "Vehicle JSONを開く", os.path.join(DIALOG_DESKTOP_DIR, "Vehicles"),
             "JSON Files (*.json)"
         )
         
@@ -6131,7 +6137,9 @@ class VehicleMonitorEditor(QMainWindow):
                     center=Position(meter_data["center"]["x"], meter_data["center"]["y"]),
                     radius=meter_data["radius"],
                     ratio=meter_data.get("ratio", 1.0),
-                    circumference=circumference_points
+                    circumference=circumference_points,
+                    orientation=meter_data.get("orientation"),
+                    bar_rect=meter_data.get("bar_rect"),
                 )
                 meters.append(meter)
             
@@ -6238,11 +6246,16 @@ class VehicleMonitorEditor(QMainWindow):
             h = meter.radius * 2
             
             # shape種別に応じて作成
-            if meter.shape == "bar":
-                # バー形状の場合（circumferenceポイントも渡す）
+            if meter.orientation is not None and meter.bar_rect is not None:
+                # 新フォーマット: orientation+bar_rectがあればbar復元
+                br = meter.bar_rect
+                shape = BarShapeItem(br["x"], br["y"], br["width"], br["height"],
+                                     current_scale, ShapeCategory.METER, True, meter.circumference)
+            elif meter.shape == "bar":
+                # 旧フォーマット互換: shape=="bar"のmeterエントリ
                 shape = BarShapeItem(x, y, w, h, current_scale, ShapeCategory.METER, True, meter.circumference)
             else:
-                # 円形の場合（circumferenceポイントも渡す）
+                # 通常の円形
                 shape = ResizableEllipseItem(x, y, w, h, current_scale, ShapeCategory.METER, True, meter.circumference)
                 
             shape.name = meter.name
@@ -6585,52 +6598,63 @@ class VehicleMonitorEditor(QMainWindow):
                 })
                 edited_meters.append(meter_data)
             
-            # BarShapeItemの処理を追加
+            # BarShapeItemの処理: meterとして出力（大半径円による直線近似）
             elif hasattr(shape, '__class__') and shape.__class__.__name__ == 'BarShapeItem':
-                # バー形状: barとして扱う
-                # 元のbarデータから属性を継承（circumferenceのみ更新）
-                original_bar = self._find_original_part_data("bar", shape.name)
-                bar_data = original_bar.copy() if original_bar else {
-                    "name": shape.name,
-                    "type": "float",
-                    "shape": "bar",
-                    "orientation": getattr(shape, 'orientation', 'horizontal'),
-                    "min_value": 0.0,
-                    "max_value": 1.0
-                }
-                
+                BAR_VIRTUAL_RADIUS = 999999
+                orientation = getattr(shape, 'orientation', 'horizontal')
+                bar_center_x = round(x + w / 2)
+                bar_center_y = round(y + h / 2)
+
+                # 分割線と垂直方向の遠方に仮想円中心を配置
+                if orientation == 'horizontal':
+                    virtual_center_x = bar_center_x
+                    virtual_center_y = bar_center_y - BAR_VIRTUAL_RADIUS
+                else:
+                    virtual_center_x = bar_center_x - BAR_VIRTUAL_RADIUS
+                    virtual_center_y = bar_center_y
+
                 # circumferenceポイントの現在座標を直接記録
                 circumference_points = []
                 if hasattr(shape, 'circumference_items') and shape.circumference_items:
                     for i, marker_item in enumerate(shape.circumference_items):
                         if i < len(shape.circumference_points):
-                            # マーカーの現在位置を直接取得（座標直接記録システム）
                             marker_pos = marker_item.pos()
                             marker_center_x = marker_pos.x() + 16  # marker_size/2
                             marker_center_y = marker_pos.y() + 16
-                            
-                            # スケール逆変換で元座標に戻す
+
                             scale = getattr(shape, 'scene_scale', 1.0)
                             original_x = marker_center_x / scale
                             original_y = marker_center_y / scale
-                            
+
                             point_data = shape.circumference_points[i]
                             circumference_points.append({
                                 "position": {"x": round(original_x, 6), "y": round(original_y, 6)},
                                 "value": point_data.value
                             })
-                
-                # circumferenceデータのみ更新（他の属性は保持）
-                bar_data["circumference"] = circumference_points
-                edited_bars.append(bar_data)
+
+                # 元のmeterデータから属性継承（存在する場合）
+                original_meter = self._find_original_part_data("meter", shape.name)
+                meter_data = original_meter.copy() if original_meter else {
+                    "name": shape.name,
+                    "type": "float",
+                }
+                meter_data.update({
+                    "shape": "circle",
+                    "orientation": orientation,
+                    "bar_rect": {"x": round(x), "y": round(y), "width": round(w), "height": round(h)},
+                    "center": {"x": virtual_center_x, "y": virtual_center_y},
+                    "radius": BAR_VIRTUAL_RADIUS,
+                    "circumference": circumference_points,
+                })
+                edited_meters.append(meter_data)
         
         # 編集されたパーツデータで置換（その他要素は保持）
         vehicle_json["icon"] = edited_icons
         vehicle_json["meter"] = edited_meters
         vehicle_json["ocr"] = edited_ocrs
-        vehicle_json["bar"] = edited_bars
-        
-        print(f"✅ Vehicle JSON生成完了 - icon:{len(edited_icons)}, meter:{len(edited_meters)}, ocr:{len(edited_ocrs)}, bar:{len(edited_bars)}")
+        vehicle_json.pop("bar", None)  # barはmeterに統合済み
+
+        print(f"✅ Vehicle JSON生成完了 - icon:{len(edited_icons)}, meter:{len(edited_meters)}, ocr:{len(edited_ocrs)}")
         return vehicle_json
     
     def _find_original_part_data(self, part_type: str, part_name: str) -> dict:
@@ -6773,7 +6797,7 @@ class VehicleMonitorEditor(QMainWindow):
     def load_vehicle_file_dialog(self):
         """Vehicle.jsonファイルダイアログを表示"""
         try:
-            default_folder = os.path.join(DEFAULT_DESKTOP_DIR, "Vehicles")
+            default_folder = os.path.join(DIALOG_DESKTOP_DIR, "Vehicles")
 
             # デフォルトフォルダが存在しない場合は作成
             if not os.path.exists(default_folder):
@@ -6946,7 +6970,7 @@ def main():
     app = QApplication(sys.argv)
     window = VehicleMonitorEditor()
     # ウィンドウは既に最大化されているのでshow()は不要
-    # window.show()  # showMaximized()で置き換え
+    window.show()  # showMaximized()で置き換え
     sys.exit(app.exec())
 
 

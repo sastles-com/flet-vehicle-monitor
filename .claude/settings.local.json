@@ -17,7 +17,8 @@
       "Bash(ipconfig)",
       "Bash(arp:*)",
       "Bash(findstr:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(python -m py_compile edit_mode.py)"
     ],
     "deny": [],
     "ask": []
