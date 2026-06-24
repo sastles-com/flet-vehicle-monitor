@@ -1101,60 +1101,7 @@ class CircumferencePointItem(QGraphicsEllipseItem):
         if normalized_angle < 0:
             normalized_angle += 2 * math.pi
         
-        # 角度制約を適用（valueは変更しない、valueが小さいほど角度も小さく）
-        # circumferenceポイントをvalue順にソート
-        sorted_points = sorted(self.parent_ellipse.circumference_points, key=lambda p: p.value)
-        current_index = next((i for i, p in enumerate(sorted_points) if p == self.point_data), -1)
-        
-        # 各ポイントの現在の角度を取得
-        point_angles = []
-        for point in sorted_points:
-            if hasattr(point, '_calculated_angle'):
-                angle = point._calculated_angle
-                # 角度を0〜2πに正規化
-                if angle < 0:
-                    angle += 2 * math.pi
-                elif angle >= 2 * math.pi:
-                    angle = angle % (2 * math.pi)
-                point_angles.append(angle)
-            else:
-                # 初期角度がない場合はvalueから推定
-                point_angles.append(point.value * 2 * math.pi)
-        
-        # 角度制約を計算
-        min_angle = 0.0
-        max_angle = 2 * math.pi
-        margin = 0.05  # 約3度のマージン
-        
-        if current_index >= 0:
-            # 前のポイント（小さいvalue）: 小さいvalueは大きい角度なので、このポイントはそれより小さい角度でなければならない
-            if current_index > 0:
-                max_angle = point_angles[current_index - 1] - margin
-            
-            # 次のポイント（大きいvalue）: 大きいvalueは小さい角度なので、このポイントはそれより大きい角度でなければならない
-            if current_index < len(sorted_points) - 1:
-                min_angle = point_angles[current_index + 1] + margin
-            
-            # 制約を適用
-            # min_angle > max_angle の場合は2πをまたいでいる
-            if min_angle >= max_angle:
-                # 2πをまたぐ場合は制約を緩和
-                if normalized_angle >= min_angle or normalized_angle <= max_angle:
-                    # 現在の角度が許可範囲内
-                    pass
-                else:
-                    # 最も近い許可範囲の境界に移動
-                    dist_to_min = abs(normalized_angle - min_angle)
-                    dist_to_max = abs(normalized_angle - max_angle)
-                    if dist_to_min < dist_to_max:
-                        normalized_angle = min_angle
-                    else:
-                        normalized_angle = max_angle
-            else:
-                # 通常の場合
-                normalized_angle = max(min_angle, min(max_angle, normalized_angle))
-        
-        # 制約された角度を使用
+        # 制約なし：任意の角度に配置可能（時計回り・反時計回りどちらでもOK）
         final_angle = normalized_angle
         
         # 円周上の座標を計算（制約された角度を使用）
@@ -3235,9 +3182,17 @@ class MonitorMainView(QWidget):
         
         # 監視状態管理
         self.is_monitoring = False
-        
+
+        # デバッグ出力フラグ（親ウィンドウの設定に従う）
+        self.debug_enabled = False
+
         self.setup_ui()
     
+    def debug_print(self, message: str):
+        """DEBUG有効時のみメッセージを出力"""
+        if self.debug_enabled:
+            print(message)
+
     def setup_ui(self):
         """MONITOR用UI設定"""
         # メインレイアウト
@@ -3729,6 +3684,47 @@ class MonitorMainView(QWidget):
         status_text = "ON" if detected else "OFF"
         painter.drawText(x1 + 5, y1 + 15, f"{icon.name}: {status_text}")
     
+    def _interpolate_meter_angle(self, meter, value: float) -> float:
+        """circumferenceポイントからvalueに対応する角度を補間する。
+        時計回り・反時計回りどちらの配置でも正しく動作する。"""
+        import math
+        points = sorted(meter.circumference, key=lambda p: p.value)
+        if not points:
+            return value * 2 * math.pi - math.pi / 2
+
+        # 各ポイントの角度を計算（center基準）
+        cx, cy = meter.center.x, meter.center.y
+        angles = []
+        for p in points:
+            raw = math.atan2(p.position.y - cy, p.position.x - cx)
+            angles.append(raw)
+
+        # 隣接するポイント間の角度差を最短経路（-π〜π）で連結し、
+        # 累積角度列を作成することで時計回り・反時計回りを正しく扱う
+        cumulative = [angles[0]]
+        for i in range(1, len(angles)):
+            diff = angles[i] - angles[i - 1]
+            if diff > math.pi:
+                diff -= 2 * math.pi
+            elif diff < -math.pi:
+                diff += 2 * math.pi
+            cumulative.append(cumulative[-1] + diff)
+
+        # value範囲外はクランプ
+        if value <= points[0].value:
+            return cumulative[0]
+        if value >= points[-1].value:
+            return cumulative[-1]
+
+        # 対応する区間を線形補間
+        for i in range(len(points) - 1):
+            v0, v1 = points[i].value, points[i + 1].value
+            if v0 <= value <= v1:
+                t = (value - v0) / (v1 - v0)
+                return cumulative[i] + t * (cumulative[i + 1] - cumulative[i])
+
+        return cumulative[-1]
+
     def draw_meter_overlay(self, painter, meter, value, scale_x, scale_y):
         """メーターパーツのオーバーレイ描画"""
         # 円の中心と半径をスケール変換
@@ -3741,9 +3737,9 @@ class MonitorMainView(QWidget):
         painter.setPen(QPen(QColor(0, 100, 255, 200), 2))
         painter.drawEllipse(center_x - radius, center_y - radius, radius * 2, radius * 2)
         
-        # 現在値に対応する針を描画
+        # 現在値に対応する針を描画（circumferenceポイントから角度を補間）
         import math
-        angle = value * 2 * math.pi - math.pi / 2  # 0を上方向として角度計算
+        angle = self._interpolate_meter_angle(meter, value)
         needle_end_x = center_x + int((radius - 10) * math.cos(angle))
         needle_end_y = center_y + int((radius - 10) * math.sin(angle))
         
@@ -3985,7 +3981,11 @@ class VehicleMonitorEditor(QMainWindow):
         self.debug_enabled = checked
         status = "ON" if checked else "OFF"
         print(f"🔧 DEBUG MODE: {status}")
-        
+
+        # MonitorMainViewにも同期
+        if hasattr(self, 'monitor_view'):
+            self.monitor_view.debug_enabled = checked
+
         # ボタンのテキストを更新
         if hasattr(self, 'debug_btn'):
             self.debug_btn.setText(f"🔧 DEBUG {'ON' if checked else 'OFF'}")
