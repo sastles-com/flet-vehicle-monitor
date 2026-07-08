@@ -6563,21 +6563,25 @@ class VehicleMonitorEditor(QMainWindow):
                 }
                 
                 # circumferenceポイントの現在座標を直接記録（座標直接記録システム）
+                # circumference_itemsは[marker0, text0, marker1, text1, ...]の交互構成のため、
+                # マーカーはインデックス i*2 でアクセスする（i のみで走査するとテキスト要素を
+                # マーカーと誤認し、位置とvalueの対応がずれるバグがあったため修正）
                 circumference_points = []
                 if hasattr(shape, 'circumference_items') and shape.circumference_items:
-                    for i, marker_item in enumerate(shape.circumference_items):
-                        if i < len(shape.circumference_points):
+                    for i, point_data in enumerate(shape.circumference_points):
+                        marker_index = i * 2
+                        if marker_index < len(shape.circumference_items):
+                            marker_item = shape.circumference_items[marker_index]
                             # マーカーの現在位置を直接取得
                             marker_pos = marker_item.pos()
                             marker_center_x = marker_pos.x() + 16  # marker_size/2
                             marker_center_y = marker_pos.y() + 16
-                            
+
                             # スケール逆変換で元座標に戻す
                             scale = getattr(shape, 'scene_scale', 1.0)
                             original_x = marker_center_x / scale
                             original_y = marker_center_y / scale
-                            
-                            point_data = shape.circumference_points[i]
+
                             circumference_points.append({
                                 "position": {"x": round(original_x, 6), "y": round(original_y, 6)},
                                 "value": point_data.value
@@ -6614,10 +6618,14 @@ class VehicleMonitorEditor(QMainWindow):
                     virtual_center_y = bar_center_y
 
                 # circumferenceポイントの現在座標を直接記録
+                # circumference_itemsは[marker0, text0, marker1, text1, ...]の交互構成のため、
+                # マーカーはインデックス i*2 でアクセスする
                 circumference_points = []
                 if hasattr(shape, 'circumference_items') and shape.circumference_items:
-                    for i, marker_item in enumerate(shape.circumference_items):
-                        if i < len(shape.circumference_points):
+                    for i, point_data in enumerate(shape.circumference_points):
+                        marker_index = i * 2
+                        if marker_index < len(shape.circumference_items):
+                            marker_item = shape.circumference_items[marker_index]
                             marker_pos = marker_item.pos()
                             marker_center_x = marker_pos.x() + 16  # marker_size/2
                             marker_center_y = marker_pos.y() + 16
@@ -6626,7 +6634,6 @@ class VehicleMonitorEditor(QMainWindow):
                             original_x = marker_center_x / scale
                             original_y = marker_center_y / scale
 
-                            point_data = shape.circumference_points[i]
                             circumference_points.append({
                                 "position": {"x": round(original_x, 6), "y": round(original_y, 6)},
                                 "value": point_data.value
