@@ -6563,29 +6563,32 @@ class VehicleMonitorEditor(QMainWindow):
                 }
                 
                 # circumferenceポイントの現在座標を直接記録（座標直接記録システム）
-                # circumference_itemsは[marker0, text0, marker1, text1, ...]の交互構成のため、
-                # マーカーはインデックス i*2 でアクセスする（i のみで走査するとテキスト要素を
-                # マーカーと誤認し、位置とvalueの対応がずれるバグがあったため修正）
+                # circumference_itemsは[marker0, text0, marker1, text1, ...]の交互構成で、
+                # マーカーはvalue昇順(sorted)で生成される。一方shape.circumference_pointsは
+                # 挿入順のままなので、両者をindexで別々に引くとposition(marker順)とvalue
+                # (points順)がずれる。各markerは生成時に対応するpoint_dataを保持しているため、
+                # valueはmarker自身のpoint_dataから取得してペアを崩さないようにする。
                 circumference_points = []
                 if hasattr(shape, 'circumference_items') and shape.circumference_items:
-                    for i, point_data in enumerate(shape.circumference_points):
-                        marker_index = i * 2
-                        if marker_index < len(shape.circumference_items):
-                            marker_item = shape.circumference_items[marker_index]
-                            # マーカーの現在位置を直接取得
-                            marker_pos = marker_item.pos()
-                            marker_center_x = marker_pos.x() + 16  # marker_size/2
-                            marker_center_y = marker_pos.y() + 16
+                    for marker_index in range(0, len(shape.circumference_items), 2):
+                        marker_item = shape.circumference_items[marker_index]
+                        point_data = getattr(marker_item, 'point_data', None)
+                        if point_data is None:
+                            continue
+                        # マーカーの現在位置を直接取得
+                        marker_pos = marker_item.pos()
+                        marker_center_x = marker_pos.x() + 16  # marker_size/2
+                        marker_center_y = marker_pos.y() + 16
 
-                            # スケール逆変換で元座標に戻す
-                            scale = getattr(shape, 'scene_scale', 1.0)
-                            original_x = marker_center_x / scale
-                            original_y = marker_center_y / scale
+                        # スケール逆変換で元座標に戻す
+                        scale = getattr(shape, 'scene_scale', 1.0)
+                        original_x = marker_center_x / scale
+                        original_y = marker_center_y / scale
 
-                            circumference_points.append({
-                                "position": {"x": round(original_x, 6), "y": round(original_y, 6)},
-                                "value": point_data.value
-                            })
+                        circumference_points.append({
+                            "position": {"x": round(original_x, 6), "y": round(original_y, 6)},
+                            "value": point_data.value
+                        })
                 elif hasattr(shape, 'circumference_points') and shape.circumference_points:
                     # フォールバック: マーカーがない場合はposition座標を使用
                     for point in shape.circumference_points:
@@ -6618,26 +6621,27 @@ class VehicleMonitorEditor(QMainWindow):
                     virtual_center_y = bar_center_y
 
                 # circumferenceポイントの現在座標を直接記録
-                # circumference_itemsは[marker0, text0, marker1, text1, ...]の交互構成のため、
-                # マーカーはインデックス i*2 でアクセスする
+                # 円形と同様、markerはvalue昇順で生成されcircumference_pointsは挿入順のため、
+                # valueはmarker自身のpoint_dataから取得してposition/valueのペアを保つ。
                 circumference_points = []
                 if hasattr(shape, 'circumference_items') and shape.circumference_items:
-                    for i, point_data in enumerate(shape.circumference_points):
-                        marker_index = i * 2
-                        if marker_index < len(shape.circumference_items):
-                            marker_item = shape.circumference_items[marker_index]
-                            marker_pos = marker_item.pos()
-                            marker_center_x = marker_pos.x() + 16  # marker_size/2
-                            marker_center_y = marker_pos.y() + 16
+                    for marker_index in range(0, len(shape.circumference_items), 2):
+                        marker_item = shape.circumference_items[marker_index]
+                        point_data = getattr(marker_item, 'point_data', None)
+                        if point_data is None:
+                            continue
+                        marker_pos = marker_item.pos()
+                        marker_center_x = marker_pos.x() + 16  # marker_size/2
+                        marker_center_y = marker_pos.y() + 16
 
-                            scale = getattr(shape, 'scene_scale', 1.0)
-                            original_x = marker_center_x / scale
-                            original_y = marker_center_y / scale
+                        scale = getattr(shape, 'scene_scale', 1.0)
+                        original_x = marker_center_x / scale
+                        original_y = marker_center_y / scale
 
-                            circumference_points.append({
-                                "position": {"x": round(original_x, 6), "y": round(original_y, 6)},
-                                "value": point_data.value
-                            })
+                        circumference_points.append({
+                            "position": {"x": round(original_x, 6), "y": round(original_y, 6)},
+                            "value": point_data.value
+                        })
 
                 # 元のmeterデータから属性継承（存在する場合）
                 original_meter = self._find_original_part_data("meter", shape.name)

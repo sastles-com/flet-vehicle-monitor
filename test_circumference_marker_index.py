@@ -1,15 +1,23 @@
 """
-circumferenceマーカーのインデックス取得に関する回帰テスト
+circumferenceマーカーの座標/value対応に関する回帰テスト
 
 背景:
     EDIT→MONITOR遷移時に呼ばれる generate_vehicle_json_data() は、
     circle/bar 図形の円周ポイント座標を shape.circumference_items から取得する。
-    circumference_items は [marker0, text0, marker1, text1, ...] の交互構成のため、
-    マーカーは必ず偶数インデックス (i*2) から取得しなければならない。
 
-    以前は enumerate(circumference_items) で全要素を順に走査し、
-    2点目以降でテキストラベルの座標をマーカー座標と誤認して保存/MQTT送信していた。
-    本テストはその回帰を防ぐ。
+    circumference_items は [marker0, text0, marker1, text1, ...] の交互構成で、
+    マーカーは **value昇順(sorted)** で生成される。一方 shape.circumference_points は
+    JSON読み込み時の **挿入順** のまま保持される。
+
+    以前の実装には2つの不具合があった:
+      (1) enumerate(circumference_items) で全要素を走査し、テキスト要素を
+          マーカーと誤認していた（テキスト座標が保存される）。
+      (2) marker_index=i*2 に修正後も、position は value昇順のmarker[i*2]から、
+          value は挿入順の circumference_points[i] から取得していたため、
+          並び順が異なると position と value の対応がずれた。
+
+    本テストは、各markerが保持する point_data から value を取得することで
+    position/value のペアが崩れないことを検証する。
 """
 import unittest
 from unittest.mock import Mock
@@ -38,8 +46,26 @@ class _Pos:
         return self._y
 
 
-class _Item:
-    """circumference_items の1要素（マーカー/テキスト）相当"""
+class _Point:
+    """circumference_points の1要素相当（CircumferencePoint相当）"""
+    def __init__(self, value):
+        self.value = value
+        self.position = _Pos(0, 0)
+
+
+class _Marker:
+    """CircumferencePointItem相当のマーカー（自身のpoint_dataを保持する）"""
+    def __init__(self, center_x, center_y, point_data):
+        # 実際のマーカーは setPos 基準（中心 = pos + 16）
+        self._pos = _Pos(center_x - 16, center_y - 16)
+        self.point_data = point_data
+
+    def pos(self):
+        return self._pos
+
+
+class _Text:
+    """value表示テキスト相当（point_dataを持たない）。ダミー座標を持たせる。"""
     def __init__(self, x, y):
         self._pos = _Pos(x, y)
 
@@ -47,38 +73,37 @@ class _Item:
         return self._pos
 
 
-class _Point:
-    """circumference_points の1要素相当"""
-    def __init__(self, value):
-        self.value = value
-        self.position = _Pos(0, 0)
-
-
 class _CircleShape:
-    """CIRCLE図形のスタブ（generate_vehicle_json_dataが参照する属性のみ実装）"""
-    def __init__(self, marker_centers, values):
+    """CIRCLE図形のスタブ（generate_vehicle_json_dataが参照する属性のみ実装）
+
+    現実に合わせ:
+      - circumference_points は挿入順
+      - circumference_items のマーカーは value昇順で並ぶ
+        （update_circumference_display と同じ挙動）
+    """
+    def __init__(self, points_in_insertion_order, marker_centers_by_value):
         self.name = "test_meter"
         self.shape_type = ShapeType.CIRCLE
         self.category = ShapeCategory.METER
         self.scene_scale = 1.0
-        # 交互構成 [marker0, text0, marker1, text1, ...] を再現。
-        # テキスト要素にはマーカーと全く異なる座標を入れ、
-        # 誤ってテキストを読んだ場合に確実に検出できるようにする。
+
+        # circumference_points は挿入順のまま保持
+        self.circumference_points = list(points_in_insertion_order)
+
+        # マーカーは value昇順で生成される
+        sorted_points = sorted(self.circumference_points, key=lambda p: p.value)
         self.circumference_items = []
-        self.circumference_points = []
-        for i, ((mx, my), value) in enumerate(zip(marker_centers, values)):
-            # setPos基準の座標（中心 = pos + 16）に合わせ、posを center-16 にする
-            self.circumference_items.append(_Item(mx - 16, my - 16))       # marker
-            self.circumference_items.append(_Item(-9000 - i, -9000 - i))    # text（ダミー座標）
-            self.circumference_points.append(_Point(value))
+        for i, point in enumerate(sorted_points):
+            cx, cy = marker_centers_by_value[point.value]
+            self.circumference_items.append(_Marker(cx, cy, point))       # marker
+            self.circumference_items.append(_Text(-9000 - i, -9000 - i))  # text（ダミー）
 
     def get_original_coords(self, scale=None):
-        # center=(400,300), radius=80 相当の矩形
         return (320.0, 220.0, 160.0, 160.0)
 
 
 class TestCircumferenceMarkerIndex(unittest.TestCase):
-    """generate_vehicle_json_data() の円周マーカー取得インデックス検証"""
+    """generate_vehicle_json_data() の円周マーカー取得検証"""
 
     def _make_editor(self, shape):
         editor = Mock()
@@ -88,36 +113,64 @@ class TestCircumferenceMarkerIndex(unittest.TestCase):
         editor._find_original_part_data = Mock(return_value=None)
         return editor
 
-    def test_circle_reads_marker_positions_not_text(self):
-        """3点の円周ポイントすべてがマーカー座標(i*2)で記録されること"""
-        marker_centers = [(116, 216), (316, 416), (516, 616)]
-        values = [0.0, 0.5, 1.0]
-        shape = _CircleShape(marker_centers, values)
-        editor = self._make_editor(shape)
-
+    def _generate(self, editor):
         # edit_mode.py内のprintに絵文字が含まれ、Windowsのcp932コンソールでは
         # 出力時にUnicodeEncodeErrorになるため、実行中のstdoutをバッファへ退避する
         with contextlib.redirect_stdout(io.StringIO()):
-            result = VehicleMonitorEditor.generate_vehicle_json_data(editor)
+            return VehicleMonitorEditor.generate_vehicle_json_data(editor)
 
-        self.assertEqual(len(result["meter"]), 1)
+    def test_position_and_value_pairing_with_unsorted_points(self):
+        """挿入順とvalue順が異なる場合でも、各circumferenceのposition/valueが対応すること"""
+        # 挿入順: 0.0, 1.0, 0.5 （value昇順ではない）
+        p0 = _Point(0.0)
+        p1 = _Point(1.0)
+        p2 = _Point(0.5)
+        # value -> マーカー中心座標（value昇順で 0.0, 0.5, 1.0 の順に配置される）
+        marker_centers_by_value = {
+            0.0: (200, 300),
+            0.5: (400, 100),
+            1.0: (600, 300),
+        }
+        shape = _CircleShape([p0, p1, p2], marker_centers_by_value)
+        result = self._generate(self._make_editor(shape))
+
         circ = result["meter"][0]["circumference"]
         self.assertEqual(len(circ), 3)
 
-        # 各ポイントがマーカー中心座標・正しいvalueで記録されているか
-        for i, (expected_center, expected_value) in enumerate(zip(marker_centers, values)):
-            self.assertAlmostEqual(circ[i]["position"]["x"], expected_center[0])
-            self.assertAlmostEqual(circ[i]["position"]["y"], expected_center[1])
-            self.assertEqual(circ[i]["value"], expected_value)
+        # value をキーに position を引けるようにする
+        pos_by_value = {c["value"]: (c["position"]["x"], c["position"]["y"]) for c in circ}
 
-        # テキストのダミー座標(-9000付近)が混入していないこと
+        # 各 value が正しいマーカー座標と対応していること（ズレていないこと）
+        for value, center in marker_centers_by_value.items():
+            self.assertIn(value, pos_by_value)
+            self.assertAlmostEqual(pos_by_value[value][0], center[0])
+            self.assertAlmostEqual(pos_by_value[value][1], center[1])
+
+        print("circumference position/value ペアリングOK")
+
+    def test_ignores_text_items_dummy_coords(self):
+        """テキスト要素のダミー座標が保存に混入しないこと"""
+        p0 = _Point(0.0)
+        p1 = _Point(0.5)
+        p2 = _Point(1.0)
+        marker_centers_by_value = {
+            0.0: (116, 216),
+            0.5: (316, 416),
+            1.0: (516, 616),
+        }
+        shape = _CircleShape([p0, p1, p2], marker_centers_by_value)
+        result = self._generate(self._make_editor(shape))
+
+        circ = result["meter"][0]["circumference"]
+        self.assertEqual(len(circ), 3)
         for point in circ:
+            # ダミーのテキスト座標(-9000付近)が混入していないこと
             self.assertGreater(point["position"]["x"], 0)
             self.assertGreater(point["position"]["y"], 0)
 
-        print("circle circumference マーカーインデックス取得OK")
+        print("circumference テキスト座標の非混入OK")
 
 
 if __name__ == '__main__':
-    print("=== circumferenceマーカーインデックス回帰テスト開始 ===")
+    print("=== circumferenceマーカー座標/value回帰テスト開始 ===")
     unittest.main(verbosity=2)
