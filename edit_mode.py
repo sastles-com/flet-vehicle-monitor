@@ -1687,12 +1687,16 @@ class ResizableEllipseItem(ResizableGraphicsItem):
                 # 計算された角度を使用して現在の円周上に配置
                 display_x = center_x + radius * math.cos(point._calculated_angle)
                 display_y = center_y + radius * math.sin(point._calculated_angle)
-                
-                # 移動していない制御点の位置も更新（vehicle.json保存時の正確性を確保）
-                if not hasattr(point, '_user_moved') or not point._user_moved:
-                    scale = self.scene_scale
-                    point.position.x = display_x / scale
-                    point.position.y = display_y / scale
+
+                # 表示位置に合わせてpoint.positionを常に同期する（vehicle.json保存時の正確性を確保）。
+                # 以前は_user_movedフラグが立った点のみ同期をスキップしていたが、
+                # そのため「マーカーを直接ドラッグした後に円をリサイズ/移動する」と
+                # 表示上のマーカーは追従するのにpoint.position(保存用データモデル)が
+                # 古い値のまま固まり、選択解除後の保存（fallback経路）に反映されない
+                # バグがあったため、常に同期するよう修正。
+                scale = self.scene_scale
+                point.position.x = display_x / scale
+                point.position.y = display_y / scale
             else:
                 # position座標がない場合：valueから角度を計算
                 angle = point.value * 2 * math.pi - math.pi / 2  # -π/2で上方向を0とする
@@ -1707,16 +1711,22 @@ class ResizableEllipseItem(ResizableGraphicsItem):
                       f"pos=({display_x:.2f}, {display_y:.2f}), user_moved={user_moved}, has_calc_angle={has_calc_angle}")
             
             # ポイントマーカー（大きな円）
+            # rect自体に絶対座標(display_x-16, display_y-16)を焼き込み、setPos()を呼ばない
+            # 実装だと、.pos()は常に(0,0)のまま（ドラッグでsetPos()されるまで）になる。
+            # generate_vehicle_json_data()はマーカーの現在位置を.pos()から読むため、
+            # 選択中に保存するとcircumferenceが(0,0)起点の意味不明な座標に壊れるバグが
+            # あった。BarShapeItemのマーカー(setPos方式)と同じ規約に統一して修正。
             marker_size = 32  # さらに大きくして選択しやすく
             point_marker = CircumferencePointItem(
-                display_x - marker_size/2,
-                display_y - marker_size/2,
+                0,
+                0,
                 marker_size,
                 marker_size,
                 self,
                 point,
                 i
             )
+            point_marker.setPos(display_x - marker_size/2, display_y - marker_size/2)
             point_marker.setBrush(QBrush(QColor(255, 128, 0)))  # オレンジ色
             point_marker.setPen(QPen(QColor(0, 0, 0), 2))
             point_marker.setZValue(1500)  # ハンドルより前面
